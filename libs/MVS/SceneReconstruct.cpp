@@ -759,12 +759,16 @@ float computePlaneSphereAngle(const delaunay_t& Tr, const facet_t& facet)
 } // namespace DELAUNAY
 
 // First, iteratively create a Delaunay triangulation of the existing point-cloud by inserting point by point,
-// iif the point to be inserted is not closer than distInsert pixels in at least one of its views to
+// if the point to be inserted is not closer than distInsert pixels in at least one of its views to
 // the projection of any of already inserted points.
 // Next, the score is computed for all the edges of the directed graph composed of points as vertices.
 // Finally, graph-cut algorithm is used to split the tetrahedrons in inside and outside,
 // and the surface is such extracted.
-bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bUseOnlyROI, unsigned nItersFixNonManifold,
+//ReconstructMesh实现
+bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance in pixels between the projection of two 3D points to consider them different while triangulating
+							bool bUseFreeSpaceSupport, //默认值是false
+							bool bUseOnlyROI, //默认值是false
+							unsigned nItersFixNonManifold,
 							float kSigma, float kQual, float kb,
 							float kf, float kRel, float kAbs, float kOutl,
 							float kInf
@@ -774,7 +778,7 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 	ASSERT(!pointcloud.IsEmpty());
 	mesh.Release();
 
-	// create the Delaunay triangulation
+	// 1.create the Delaunay triangulation
 	delaunay_t delaunay;
 	std::vector<cell_info_t> infoCells;
 	std::vector<camera_cell_t> camCells;
@@ -782,11 +786,14 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 	{
 		TD_TIMER_STARTD();
 
-		std::vector<point_t> vertices(pointcloud.points.GetSize());
-		std::vector<std::ptrdiff_t> indices(pointcloud.points.GetSize());
+		//kernel_t::Point_3  = point_t 是cgal的数据类型
+		std::vector<point_t> vertices(pointcloud.points.GetSize());//在bounding box范围内的所有点
+		std::vector<std::ptrdiff_t> indices(pointcloud.points.GetSize());//在boudning box范围内原始点的原始索引
+		
 		// fetch points
 		if (bUseOnlyROI && !IsBounded())
 			bUseOnlyROI = false;
+		//1.遍历所有的点，然后得到哪些点在bounding box范围内
 		FOREACH(i, pointcloud.points) {
 			const PointCloud::Point& X(pointcloud.points[i]);
 			if (bUseOnlyROI && !obb.Intersects(X))
@@ -794,19 +801,25 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 			vertices[i] = point_t(X.x, X.y, X.z);
 			indices[i] = i;
 		}
-		// sort vertices
+
+		//2. sort vertices
+		//CGAL::spatial_sort是一个用于对几何对象进行空间排序的函数。它基于四叉树数据结构，可以将空间划分为四个象限，然后递归地对每个象限进行排序。
+		//空间排序的目的是确定对象的相对位置关系，以便在几何计算中按照特定的顺序处理这些对象。
 		typedef CGAL::Spatial_sort_traits_adapter_3<delaunay_t::Geom_traits, point_t*> Search_traits;
 		CGAL::spatial_sort(indices.begin(), indices.end(), Search_traits(&vertices[0], delaunay.geom_traits()));
+		
+		
 		// insert vertices
 		Util::Progress progress(_T("Points inserted"), indices.size());
 		const float distInsertSq(SQUARE(distInsert));
-		vertex_handle_t hint;
+		vertex_handle_t hint;//这个是cgal的数据格式， 存储的是顶点的句柄
 		delaunay_t::Locate_type lt;
 		int li, lj;
+		//3.遍历所有在boundingbox中的所有点，
 		std::for_each(indices.cbegin(), indices.cend(), [&](size_t idx) {
 			const point_t& p = vertices[idx];
 			const PointCloud::Point& point = pointcloud.points[idx];
-			const PointCloud::ViewArr& views = pointcloud.pointViews[idx];
+			const PointCloud::ViewArr& views = pointcloud.pointViews[idx];//记录了这个点被哪些帧观测到过
 			ASSERT(!views.IsEmpty());
 			if (hint == vertex_handle_t()) {
 				// this is the first point,
@@ -814,7 +827,7 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 				hint = delaunay.insert(p);
 				ASSERT(hint != vertex_handle_t());
 			} else
-			if (distInsert <= 0) {
+			if (distInsert <= 0) {//默认应该永远不会进入这个条件！！！
 				// insert all points
 				hint = delaunay.insert(p, hint);
 				ASSERT(hint != vertex_handle_t());
@@ -873,8 +886,11 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 		});
 		progress.close();
 		pointcloud.Release();
-		// init cells weights and
+
+
+		// 4.init cells weights and
 		// loop over all cells and store the finite facet of the infinite cells
+		//前面已经将点插入到了德劳内的数据结构中，并生成了cell，遍历
 		const size_t numNodes(delaunay.number_of_cells());
 		infoCells.resize(numNodes);
 		memset(&infoCells[0], 0, sizeof(cell_info_t)*numNodes);
@@ -882,7 +898,7 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 		for (delaunay_t::All_cells_iterator ci=delaunay.all_cells_begin(), eci=delaunay.all_cells_end(); ci!=eci; ++ci, ++ciID) {
 			ci->info() = ciID;
 			// skip the finite cells
-			if (!delaunay.is_infinite(ci))
+			if (!delaunay.is_infinite(ci))//这是一个cgal的函数
 				continue;
 			// find the finite face
 			for (int f=0; f<4; ++f) {
@@ -911,10 +927,11 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 		}
 
 		DEBUG_EXTRA("Delaunay tetrahedralization completed: %u points -> %u vertices, %u (+%u) cells, %u (+%u) faces (%s)", indices.size(), delaunay.number_of_vertices(), delaunay.number_of_finite_cells(), delaunay.number_of_cells()-delaunay.number_of_finite_cells(), delaunay.number_of_finite_facets(), delaunay.number_of_facets()-delaunay.number_of_finite_facets(), TD_TIMER_GET_FMT().c_str());
-	}
+	}//德劳内三角形生成结束！！！！！！！！！
 
-	// for every camera-point ray intersect it with the tetrahedrons and
+	// for every camera-point ray intersect it with the tetrahedrons(四面体) and
 	// add alpha_vis(point) to cell's directed edge in the graph
+	//这个功能应该就是mvs提到论文中的算法！！！
 	{
 		TD_TIMER_STARTD();
 
@@ -1090,9 +1107,10 @@ bool Scene::ReconstructMesh(float distInsert, bool bUseFreeSpaceSupport, bool bU
 		#endif
 
 		DEBUG_EXTRA("Delaunay tetrahedras weighting completed: %u cells, %u faces (%s)", delaunay.number_of_cells(), delaunay.number_of_facets(), TD_TIMER_GET_FMT().c_str());
-	}
+	}//根据射线关系做一些算法，结束！！！！！！
 
 	// run graph-cut and extract the mesh
+	//运行图割算法最终生成mesh
 	{
 		TD_TIMER_STARTD();
 

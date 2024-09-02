@@ -76,7 +76,7 @@ public:
 
 public:
 	PointArr points;
-	PointViewArr pointViews; // array of views for each point (ordered increasing)
+	PointViewArr pointViews; // array of views for each point (ordered increasing)，一个点可能被多帧观测到过，因此需要记录被哪些frame观测到过
 	PointWeightArr pointWeights;
 	NormalArr normals;
 	ColorArr colors;

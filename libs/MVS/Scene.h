@@ -49,6 +49,7 @@ namespace MVS {
 // Forward declarations
 struct MVS_API DenseDepthMapData;
 
+//如果是ubuntu操作系统 MVS_API这个宏可以忽略，默认是空的
 class MVS_API Scene
 {
 public:

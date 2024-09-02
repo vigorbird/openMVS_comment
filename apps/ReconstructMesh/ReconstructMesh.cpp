@@ -214,9 +214,11 @@ bool Application::Initialize(size_t argc, LPCTSTR* argv)
 	if (OPT::strOutputFileName.empty())
 		OPT::strOutputFileName = Util::getFileFullName(OPT::strInputFileName) + _T("_mesh.mvs");
 
-	MVS::Initialize(APPNAME, OPT::nMaxThreads, OPT::nProcessPriority);
+	MVS::Initialize(APPNAME, OPT::nMaxThreads, OPT::nProcessPriority);//比较重要的函数！！！！！！！！！！！！！！
 	return true;
-}
+}//end funtion Application::Initialize!!!!!
+
+
 
 // finalize application instance
 void Application::Finalize()
@@ -331,7 +333,11 @@ bool Export3DProjections(Scene& scene, const String& inputFileName) {
 			oStream.print("NA\n");
 	}
 	return true;
-}
+}//end function Export3DProjections
+
+
+
+
 
 int main(int argc, LPCTSTR* argv)
 {
@@ -346,16 +352,21 @@ int main(int argc, LPCTSTR* argv)
 
 	Scene scene(OPT::nMaxThreads);
 	// load project
+	//加载之前的scene文件！！！！！！！！！！
 	const Scene::SCENE_TYPE sceneType(scene.Load(MAKE_PATH_SAFE(OPT::strInputFileName),
-		OPT::fSplitMaxArea > 0 || OPT::fDecimateMesh < 1 || OPT::nTargetFaceNum > 0 || !OPT::strImportROIFileName.empty()));
+									  OPT::fSplitMaxArea > 0 || OPT::fDecimateMesh < 1 || OPT::nTargetFaceNum > 0 || !OPT::strImportROIFileName.empty()));
+	//如果scene加载不成功则直接退！！！！！！！！
 	if (sceneType == Scene::SCENE_NA)
 		return EXIT_FAILURE;
-	if (!OPT::strPointCloudFileName.empty() && (File::isFile(MAKE_PATH_SAFE(OPT::strPointCloudFileName)) ?
-		!scene.pointcloud.Load(MAKE_PATH_SAFE(OPT::strPointCloudFileName)) :
-		!scene.pointcloud.IsValid())) {
+	
+	//非常重要在这里加载了稠密点云！！！！！！！
+	if (!OPT::strPointCloudFileName.empty() && 
+		(File::isFile(MAKE_PATH_SAFE(OPT::strPointCloudFileName)) ? !scene.pointcloud.Load(MAKE_PATH_SAFE(OPT::strPointCloudFileName)) :
+																	!scene.pointcloud.IsValid())) {
 		VERBOSE("error: cannot load point-cloud file");
 		return EXIT_FAILURE;
 	}
+	//加载mesh了！！！！！！！！！！！！！！！！！！
 	if (!OPT::strMeshFileName.empty() && !scene.mesh.Load(MAKE_PATH_SAFE(OPT::strMeshFileName))) {
 		VERBOSE("error: cannot load mesh file");
 		return EXIT_FAILURE;
@@ -380,7 +391,7 @@ int main(int argc, LPCTSTR* argv)
 			const size_t numFaces = scene.mesh.faces.size();
 			scene.mesh.RemoveFacesOutside(scene.obb);
 			VERBOSE("Mesh trimmed to ROI: %u vertices and %u faces removed (%s)",
-				numVertices-scene.mesh.vertices.size(), numFaces-scene.mesh.faces.size(), TD_TIMER_GET_FMT().c_str());
+					numVertices-scene.mesh.vertices.size(), numFaces-scene.mesh.faces.size(), TD_TIMER_GET_FMT().c_str());
 			scene.mesh.Save(baseFileName+OPT::strExportType);
 			return EXIT_SUCCESS;
 		}
@@ -391,6 +402,7 @@ int main(int argc, LPCTSTR* argv)
 		return EXIT_SUCCESS;
 	}
 
+	//默认值是false
 	if (OPT::bMeshExport) {
 		// check there is a mesh to export
 		if (scene.mesh.IsEmpty())
@@ -408,9 +420,12 @@ int main(int argc, LPCTSTR* argv)
 			scene.obb.EnlargePercent(OPT::fBorderROI);
 		else if (OPT::fBorderROI < 0)
 			scene.obb.Enlarge(-OPT::fBorderROI);
+
+		//后面的代码全部都在这个if下面！！！
 		if (OPT::strMeshFileName.empty() && scene.mesh.IsEmpty()) {
 			// reset image resolution to the original size and
 			// make sure the image neighbors are initialized before deleting the point-cloud
+			//1.遍历场景中的所有图像，并将图像全部加载进来！！
 			#ifdef RECMESH_USE_OPENMP
 			bool bAbort(false);
 			#pragma omp parallel for
@@ -435,13 +450,15 @@ int main(int argc, LPCTSTR* argv)
 					return EXIT_FAILURE;
 					#endif
 				}
-				imageData.UpdateCamera(scene.platforms);
+				imageData.UpdateCamera(scene.platforms);//获取图像结构！！！
 				// select neighbor views
 				if (imageData.neighbors.empty()) {
 					IndexArr points;
 					scene.SelectNeighborViews(idxImage, points);
 				}
-			}
+			}//加载所有的图像结束！！！！！
+
+
 			#ifdef RECMESH_USE_OPENMP
 			if (bAbort)
 				return EXIT_FAILURE;
@@ -450,7 +467,15 @@ int main(int argc, LPCTSTR* argv)
 			TD_TIMER_START();
 			if (OPT::bUseConstantWeight)
 				scene.pointcloud.pointWeights.Release();
-			if (!scene.ReconstructMesh(OPT::fDistInsert, OPT::bUseFreeSpaceSupport, OPT::bUseOnlyROI, 4, OPT::fThicknessFactor, OPT::fQualityFactor))
+			
+			//2.加载完图像数据后，开始进行mehs重建！！！！！！非常重要的函数！！！！
+			//搜索 ReconstructMesh实现
+			if (!scene.ReconstructMesh(OPT::fDistInsert, //默认值2.5，minimum distance in pixels between the projection of two 3D points to consider them different while triangulating
+										OPT::bUseFreeSpaceSupport,//默认值false，exploits the free-space support in order to reconstruct weakly-represented surfaces
+										OPT::bUseOnlyROI,//默认值false，use only the points inside the ROI
+										4, //
+										OPT::fThicknessFactor,//默认值1.0，multiplier adjusting the minimum thickness considered during visibility weighting
+										OPT::fQualityFactor))//默认值1.0， multiplier adjusting the quality weight considered during graph-cut
 				return EXIT_FAILURE;
 			VERBOSE("Mesh reconstruction completed: %u vertices, %u faces (%s)", scene.mesh.vertices.GetSize(), scene.mesh.faces.GetSize(), TD_TIMER_GET_FMT().c_str());
 			#if TD_VERBOSE != TD_VERBOSE_OFF
@@ -479,7 +504,7 @@ int main(int argc, LPCTSTR* argv)
 		scene.mesh.Clean(1.f, 0.f, false, 0u, 0u, 0.f, true); // extra cleaning to remove non-manifold problems created by closing holes
 		scene.obb = initialOBB;
 
-		// save the final mesh
+		// save the final mesh 非常重要的保存结果！！！将最终生成的mesh进行了保存！！！！！！
 		scene.mesh.Save(baseFileName+OPT::strExportType);
 		#if TD_VERBOSE != TD_VERBOSE_OFF
 		if (VERBOSITY_LEVEL > 2)
@@ -487,9 +512,10 @@ int main(int argc, LPCTSTR* argv)
 		#endif
 		if ((ARCHIVE_TYPE)OPT::nArchiveType != ARCHIVE_MVS || sceneType != Scene::SCENE_INTERFACE)
 			scene.Save(baseFileName+_T(".mvs"), (ARCHIVE_TYPE)OPT::nArchiveType);
-	}
+	}//大的if结束！！！！！！
 
 	if (!OPT::strImagePointsFileName.empty()) {
+		//这个因该是将重建出来的mesh然后投影会图像，记录的是每个顶点投影到图像上的像素坐标！！！！！
 		Export3DProjections(scene, MAKE_PATH_SAFE(OPT::strImagePointsFileName));
 		return EXIT_SUCCESS;
 	}
