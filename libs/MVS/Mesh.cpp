@@ -498,6 +498,7 @@ bool Mesh::GetEdgeOrientation(FIndex idxFace, VIndex iV0, VIndex iV1) const
 // return NO_ID if no adjacent faces exist OR
 // more than one adjacent face exist OR
 // the edge have opposite orientations in each face
+//FIndex = uint32
 Mesh::FIndex Mesh::GetEdgeAdjacentFace(FIndex idxFace, VIndex iV0, VIndex iV1) const
 {
 	// iterate over all faces containing the first vertex
@@ -526,6 +527,7 @@ Mesh::FIndex Mesh::GetEdgeAdjacentFace(FIndex idxFace, VIndex iV0, VIndex iV1) c
 	return idxFaceAdj;
 }
 
+//
 void Mesh::GetAdjVertices(VIndex v, VertexIdxArr& indices) const
 {
 	ASSERT(vertexFaces.size() == vertices.size());
@@ -556,6 +558,8 @@ void Mesh::GetAdjVertexFaces(VIndex idxVCenter, VIndex idxVAdj, FaceIdxArr& indi
 
 // fix non-manifold vertices and edges;
 // return the number of non-manifold issues found
+//magDisplacementDuplicateVertices = 默认值等于0.01 
+//duplicatedVertices = 默认值是一个空指针
 unsigned Mesh::FixNonManifold(float magDisplacementDuplicateVertices, VertexIdxArr* duplicatedVertices)
 {
 	ASSERT(!vertices.empty() && !faces.empty());
@@ -564,7 +568,8 @@ unsigned Mesh::FixNonManifold(float magDisplacementDuplicateVertices, VertexIdxA
 	// iterate over all vertices and separates the components
 	// incident to the same vertex by duplicating the vertex
 	unsigned numNonManifoldIssues(0);
-	CLISTDEF0IDX(int, FIndex) components(faces.size());
+	CLISTDEF0IDX(int, FIndex) components(faces.size());//本质上是一个vector
+	//后面的代码全部在这个for下面， 遍历所有顶点
 	FOREACH(idxVert, vertices) {
 		// reset component indices to which each face connected to this vertex
 		const FaceIdxArr& vertFaces = vertexFaces[idxVert];
@@ -611,6 +616,9 @@ unsigned Mesh::FixNonManifold(float magDisplacementDuplicateVertices, VertexIdxA
 				}
 			} while (!queueFaces.empty());
 		}
+
+
+		
 		// if there is only one component, continue with the next vertex
 		if (component <= 1)
 			continue;
@@ -624,7 +632,8 @@ unsigned Mesh::FixNonManifold(float magDisplacementDuplicateVertices, VertexIdxA
 				duplicatedVertices->emplace_back(idxVert);
 			// update the face indices of the current component
 			FaceIdxArr& vertFacesNew = vertexFaces.emplace_back();
-			FaceIdxArr& vertFaces = vertexFaces[idxVert];
+			FaceIdxArr& vertFaces = vertexFaces[idxVert];//哪些face包含了这个顶点，本质是等价于vector的数据变量
+			//遍历包含了这个顶点的face
 			RFOREACH(ivf, vertFaces) {
 				const FIndex idxFace = vertFaces[ivf];
 				if (components[idxFace] != c)
@@ -643,6 +652,7 @@ unsigned Mesh::FixNonManifold(float magDisplacementDuplicateVertices, VertexIdxA
 			++numNonManifoldIssues;
 		}
 		// adjust vertex positions
+		//默认进入这个条件， magDisplacementDuplicateVertices 默认值 = 0.01
 		if (magDisplacementDuplicateVertices > 0) {
 			// list changed vertices
 			VertexIdxArr verts(component);
@@ -654,8 +664,8 @@ unsigned Mesh::FixNonManifold(float magDisplacementDuplicateVertices, VertexIdxA
 			FOREACH(i, verts) {
 				const VIndex idxVert(verts[i]);
 				VertexIdxArr adjVerts;
-				GetAdjVertices(idxVert, adjVerts);
-				TAccumulator<Vertex> accum;
+				GetAdjVertices(idxVert, adjVerts);//根据这点的坐标寻找被哪些face包含了，然后将这些face的三个顶点压到队列中，最终得到adjVerts
+				TAccumulator<Vertex> accum;//
 				for (VIndex iV: adjVerts)
 					accum.Add(vertices[iV], 1.f);
 				const Vertex bv(accum.Normalized());
