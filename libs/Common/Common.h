@@ -233,7 +233,7 @@ typedef TAABB<REAL, 3> AABB3;
 typedef TOBB<REAL, 2> OBB2;
 typedef TOBB<REAL, 3> OBB3;
 typedef TRay<REAL, 2> Ray2;
-typedef TRay<REAL, 3> Ray3;
+typedef TRay<REAL, 3> Ray3;//REAL = double
 typedef TLine<REAL, 2> Line2;
 typedef TLine<REAL, 3> Line3;
 typedef TTriangle<REAL, 2> Triangle2;

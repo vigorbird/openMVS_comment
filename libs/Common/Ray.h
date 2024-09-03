@@ -68,6 +68,7 @@ public:
 	typedef SEACAVE::TPlane<TYPE,DIMS> PLANE;
 	enum { numScalar = (2*DIMS) };
 
+	//两个核心的成员变量！！！！！！！！！
 	VECTOR	m_vDir;		// ray direction (normalized)
 	POINT	m_pOrig;	// ray origin
 

@@ -600,14 +600,17 @@ bool TRay<TYPE,DIMS>::Intersects(const PLANE& plane, bool bCull, TYPE *t, POINT*
 
 	return true;
 } // Intersects(PLANE)
+
 // same as above, but no checks
+//计算的是射线到平面的距离
 template <typename TYPE, int DIMS>
 inline TYPE TRay<TYPE,DIMS>::IntersectsDist(const PLANE& plane) const
 {
 	const TYPE Vd(plane.m_vN.dot(m_vDir));
 	const TYPE Vo(-plane.Distance(m_pOrig));
-	return SAFEDIVIDE(Vo, Vd);
+	return SAFEDIVIDE(Vo, Vd);//本质上是V0/Vd
 } // IntersectsDist(PLANE)
+
 template <typename TYPE, int DIMS>
 inline typename TRay<TYPE,DIMS>::POINT TRay<TYPE,DIMS>::Intersects(const PLANE& plane) const
 {
