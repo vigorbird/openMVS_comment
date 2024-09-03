@@ -215,25 +215,29 @@ struct view_info_t;
 struct vert_info_t {
 	typedef edge_cap_t Type;
 	struct view_t {
-		PointCloud::View idxView; // view index
-		Type weight; // point's weight
+		PointCloud::View idxView; // view index， PointCloud::View = uint32
+		Type weight; // point's weight， Type = float
 		inline view_t() {}
 		inline view_t(PointCloud::View _idxView, Type _weight) : idxView(_idxView), weight(_weight) {}
 		inline bool operator <(const view_t& v) const { return idxView < v.idxView; }
 		inline operator PointCloud::View() const { return idxView; }
 	};
-	typedef SEACAVE::cList<view_t,const view_t&,0,4,uint32_t> view_vec_t;
+	typedef SEACAVE::cList<view_t,const view_t&,0,4,uint32_t> view_vec_t;//保存的是观测到这个顶点的所有fram的id
+
+	//核心的成员变量就这一个！！！！！！！！！
 	view_vec_t views; // faces' weight from the cell outwards
-	#ifdef DELAUNAY_WEAKSURF
+	#ifdef DELAUNAY_WEAKSURF //默认好像没有定义这个宏
 	view_info_t* viewsInfo; // each view caches the two faces from the point towards the camera and the end (used only by the weakly supported surfaces)
 	inline vert_info_t() : viewsInfo(NULL) {}
 	~vert_info_t();
 	void AllocateInfo();
 	#else
-	inline vert_info_t() {}
+	inline vert_info_t() {} //默认启用这个代码！！！
 	#endif
+
+	//为这个顶点添加新的观测view
 	void InsertViews(const PointCloud& pc, PointCloud::Index idxPoint) {
-		const PointCloud::ViewArr& _views = pc.pointViews[idxPoint];
+		const PointCloud::ViewArr& _views = pc.pointViews[idxPoint];//看到这个点的所有观测！！！
 		ASSERT(!_views.IsEmpty());
 		const PointCloud::WeightArr* pweights(pc.pointWeights.IsEmpty() ? NULL : pc.pointWeights.Begin()+idxPoint);
 		ASSERT(pweights == NULL || _views.GetSize() == pweights->GetSize());
@@ -242,19 +246,21 @@ struct vert_info_t {
 			const PointCloud::Weight weight(pweights ? (*pweights)[i] : PointCloud::Weight(1));
 			// insert viewID in increasing order
 			const uint32_t idx(views.FindFirstEqlGreater(viewID));
+			//进入这个条件表示在队列中找到了大于viewID的序号！！！
 			if (idx < views.GetSize() && views[idx] == viewID) {
 				// the new view is already in the array
 				ASSERT(views.FindFirst(viewID) == idx);
 				// update point's weight
 				views[idx].weight += weight;
 			} else {
+				//表示现有的观测中并没有这个view序号因此需要加入到队列中
 				// the new view is not in the array,
 				// insert it
 				views.InsertAt(idx, view_t(viewID, weight));
 				ASSERT(views.IsSorted());
 			}
 		}
-	}
+	}//end function InsertViews
 };
 
 struct cell_info_t {
@@ -266,6 +272,9 @@ struct cell_info_t {
 	inline Type* ptr() { return f; }
 };
 
+// kernel_t = CGAL::Exact_predicates_inexact_constructions_kernel
+//cell_size_t = uint32
+//需要非常注意vert_info_t数据类型！！！！！这个数据类型是作者自己定义的，就在这个文件中被使用了！！！
 typedef CGAL::Triangulation_vertex_base_with_info_3<vert_info_t, kernel_t> vertex_base_t;
 typedef CGAL::Triangulation_cell_base_with_info_3<cell_size_t, kernel_t> cell_base_t;
 typedef CGAL::Triangulation_data_structure_3<vertex_base_t, cell_base_t> triangulation_data_structure_t;
@@ -337,6 +346,10 @@ inline Plane getFacetPlane(const facet_t& facet)
 #pragma GCC push_options
 #pragma GCC target ("no-fma")
 #endif
+
+//根据输入的三个顶点所形成的面片信息，判断输入的点p是否在这平面上，在平面外，在平面内？
+//如果在平面上则返回CGAL::COPLANAR， 如果在平面外则返回CGAL::POSITIVE， 如果在平面内则返回false
+//详见算法实现文档
 static inline int orientation(const point_t& a, const point_t& b, const point_t& c, const point_t& p)
 {
 	#if 0
@@ -346,6 +359,7 @@ static inline int orientation(const point_t& a, const point_t& b, const point_t&
 	const double& px = a.x(); const double& py = a.y(); const double& pz = a.z();
 	const double pqx(b.x()-px); const double prx(c.x()-px); const double psx(p.x()-px);
 	const double pqy(b.y()-py); const double pry(c.y()-py); const double psy(p.y()-py);
+
 	#if 1
 	const double det((pqx*pry-prx*pqy)*(p.z()-pz) - (pqx*psy-psx*pqy)*(c.z()-pz) + (prx*psy-psx*pry)*(b.z()-pz));
 	const double eps(1e-12);
@@ -383,8 +397,15 @@ inline bool checkPointInside(const point_t& a, const point_t& b, const point_t& 
 // Given a cell and a camera inside it, if the cell is infinite,
 // find all facets on the convex-hull and inside the camera frustum,
 // else return all four cell's facets
+//这个函数的作用是，先根据相机生成一个视椎，然后遍历所有的面片
+//遍历面片中的每个面片，用面片中的三个顶点构建bodning box，判断视椎能够看到这个bounding box
+//如果能够看到这个bounding box则将面面片压入到facets中，并返回
 template <int FacetOrientation>
-void fetchCellFacets(const delaunay_t& Tr, const std::vector<facet_t>& hullFacets, const cell_handle_t& cell, const Image& imageData, std::vector<facet_t>& facets)
+void fetchCellFacets(const delaunay_t& Tr, 
+					const std::vector<facet_t>& hullFacets, //这个数据结构是cgal的面片数据结构！！！
+					const cell_handle_t& cell, 
+					const Image& imageData, 
+					std::vector<facet_t>& facets)//返回的结果，被这个相机看到的面片，这个是cgal的数据结构
 {
 	if (!Tr.is_infinite(cell)) {
 		// store all 4 facets of the cell
@@ -398,22 +419,27 @@ void fetchCellFacets(const delaunay_t& Tr, const std::vector<facet_t>& hullFacet
 	// find all facets on the convex-hull in camera's view
 	// create the 4 frustum planes
 	ASSERT(facets.empty());
-	const TFrustum<REAL,4> frustum(imageData.camera.P, imageData.width, imageData.height, 0, 1);
+	//REAL = double
+	//0和1表示椎体的深度
+	const TFrustum<REAL,4> frustum(imageData.camera.P, imageData.width, imageData.height, 0, 1);//P是投影矩阵，width和height是图像的宽和高
 	// loop over all cells
-	const point_t ptOrigin(MVS2CGAL(imageData.camera.C));
+	const point_t ptOrigin(MVS2CGAL(imageData.camera.C));//C表示的是相机的位置
 	for (const facet_t& face: hullFacets) {
 		// add face if visible
-		const triangle_t verts(Tr.triangle(face));
-		if (orientation(verts[0], verts[1], verts[2], ptOrigin) != FacetOrientation)
+		const triangle_t verts(Tr.triangle(face));//这个是cgal的函数，输入的是面片，返回的是这个面片对应的三个顶点
+		if (orientation(verts[0], verts[1], verts[2], ptOrigin) != FacetOrientation)/根据输入的三个顶点所形成的面片信息，判断输入的点p是否在这平面上，在平面外，在平面内？
 			continue;
 		AABB3 ab(CGAL2MVS<REAL>(verts[0]));
 		for (int i=1; i<3; ++i)
-			ab.Insert(CGAL2MVS<REAL>(verts[i]));
-		if (frustum.Classify(ab) == CULLED)
+			ab.Insert(CGAL2MVS<REAL>(verts[i]));//这个insert函数就是不停更新aabb的bouding box的最大最小值
+		
+		//表示椎体完全在这个bounding box外面
+		if (frustum.Classify(ab) == CULLED)//搜索 TFrustum<TYPE,DIMS>::Classify(const AABB& aabb)
 			continue;
+
 		facets.push_back(face);
 	}
-}
+}//end function fetchCellFacets
 
 
 // information about an intersection between a segment and a facet
@@ -824,7 +850,7 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 			if (hint == vertex_handle_t()) {
 				// this is the first point,
 				// insert it
-				hint = delaunay.insert(p);
+				hint = delaunay.insert(p);//这个是cgal的接口函数！！！！向德劳内数据结构插入顶点
 				ASSERT(hint != vertex_handle_t());
 			} else
 			if (distInsert <= 0) {//默认应该永远不会进入这个条件！！！
@@ -833,7 +859,9 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 				ASSERT(hint != vertex_handle_t());
 			} else {
 				// locate cell containing this point
-				const cell_handle_t c(delaunay.locate(p, lt, li, lj, hint->cell()));
+				//lt = 用于输出点的位置类型。可能的值包括：点在一个单元内部（如三角形或四面体）、点在一个面上（在三维网格中，即在某个三角形面上）、点在一个边上、点在一个顶点上。
+				//这个函数主要确定这个顶点在哪个cell中
+				const cell_handle_t c(delaunay.locate(p, lt, li, lj, hint->cell()));//cgal函数，
 				if (lt == delaunay_t::VERTEX) {
 					// duplicate point, nothing to insert,
 					// just update its visibility info
@@ -855,21 +883,27 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 						// - repeatedly take the nearest of its incident vertices if any
 						// - if not, we're done
 						ASSERT(c != cell_handle_t());
-						nearest = delaunay.nearest_vertex_in_cell(p, c);
+						//cell c中哪个顶点距离p点位置最近，并返回这个点
+						nearest = delaunay.nearest_vertex_in_cell(p, c);//p是这个顶点的位置， c是这个顶点所在的cell
 						while (true) {
 							const vertex_handle_t v(nearest);
+							
 							delaunay.adjacent_vertices(nearest, adjacent_vertex_back_inserter_t(delaunay, p, nearest));
 							if (v == nearest)
 								break;
 						}
 					}
+
 					ASSERT(nearest == delaunay.nearest_vertex(p, hint->cell()));
 					hint = nearest;
 					// check if point is far enough to all existing points
+					//遍历看到这个点的所有视角
 					FOREACHPTR(pViewID, views) {
 						const Image& imageData = images[*pViewID];
 						const Point3f pn(imageData.camera.ProjectPointP3(point));
 						const Point3f pe(imageData.camera.ProjectPointP3(CGAL2MVS<float>(nearest->point())));
+						//如果两个点在一个相机下的欧式距离足够大 或者 深度不接近，就将这个点插入到德劳内三角形数据结构中。
+						//但是作者这里计算深度是否接近比较特殊！！！！！！详见算法实现文档
 						if (!IsDepthSimilar(pn.z, pe.z) || normSq(Point2f(pn)-Point2f(pe)) > distInsertSq) {
 							// point far enough to an existing point,
 							// insert as a new point
@@ -881,7 +915,7 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 				}
 			}
 			// update point visibility info
-			hint->info().InsertViews(pointcloud, idx);
+			hint->info().InsertViews(pointcloud, idx);//向这个顶点添加新的观测，一个作者自己写的小函数！！！
 			++progress;
 		});
 		progress.close();
@@ -890,20 +924,24 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 
 		// 4.init cells weights and
 		// loop over all cells and store the finite facet of the infinite cells
-		//前面已经将点插入到了德劳内的数据结构中，并生成了cell，遍历
-		const size_t numNodes(delaunay.number_of_cells());
-		infoCells.resize(numNodes);
+		//前面已经将点插入到了德劳内的数据结构中，并生成了cell，遍历所有cell，再遍历每个cell中的4个face
+		//然后将那些不是infinite的cell推入hullFacets中
+		const size_t numNodes(delaunay.number_of_cells());//这个是cgal中的函数！！！！！详见算法实现文档
+		infoCells.resize(numNodes);//infoCells的大小等于德劳内结构中的所有cell相同
+		//infoCells = 开始填充的起始点。
+		//0 表示要填充的值
+		//最后一个参数表示赋值多少个字节
 		memset(&infoCells[0], 0, sizeof(cell_info_t)*numNodes);
 		cell_size_t ciID(0);
 		for (delaunay_t::All_cells_iterator ci=delaunay.all_cells_begin(), eci=delaunay.all_cells_end(); ci!=eci; ++ci, ++ciID) {
 			ci->info() = ciID;
 			// skip the finite cells
-			if (!delaunay.is_infinite(ci))//这是一个cgal的函数
+			if (!delaunay.is_infinite(ci))//这是一个cgal的函数，详见算法实现文档
 				continue;
 			// find the finite face
 			for (int f=0; f<4; ++f) {
 				const facet_t facet(ci, f);
-				if (!delaunay.is_infinite(facet)) {
+				if (!delaunay.is_infinite(facet)) {//这是一个cgal的函数，详见算法实现文档
 					// store face
 					hullFacets.push_back(facet);
 					break;
@@ -911,6 +949,7 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 			}
 		}
 		// find all cells containing a camera
+		//遍历所有的图像，判断相机是否能hullFacets中的面片，被观测到的面片会被标注出来
 		camCells.resize(images.GetSize());
 		FOREACH(i, images) {
 			const Image& imageData = images[i];
@@ -918,10 +957,13 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 				continue;
 			const Camera& camera = imageData.camera;
 			camera_cell_t& camCell = camCells[i];
-			camCell.cell = delaunay.locate(MVS2CGAL(camera.C));
+			camCell.cell = delaunay.locate(MVS2CGAL(camera.C));//C表示是位置 返回的数据类型也是cgal的类型
 			ASSERT(camCell.cell != cell_handle_t());
+			//获取这个相机看到了哪些面片，相对比较重要的函数！！！！
 			fetchCellFacets<CGAL::POSITIVE>(delaunay, hullFacets, camCell.cell, imageData, camCell.facets);
+
 			// link all cells contained by the camera to the source
+			//遍历这些看到的所有面片，然后标注哪些面片被观测到了
 			for (const facet_t& f: camCell.facets)
 				infoCells[f.first->info()].s = kInf;
 		}
@@ -935,10 +977,12 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 	{
 		TD_TIMER_STARTD();
 
+		//2.1 先计算所有边的长度，然后得到一个中间的长度，并乘以一个系数得到一个阈值inv2SigmaSq
 		// estimate the size of the smallest reconstructible object
-		FloatArr distsSq(0, delaunay.number_of_edges());
+		FloatArr distsSq(0, delaunay.number_of_edges());//记录空间中所有的边的长度
+		//调用cgal的成员函数，遍历所有的边
 		for (delaunay_t::Finite_edges_iterator ei=delaunay.finite_edges_begin(), eei=delaunay.finite_edges_end(); ei!=eei; ++ei) {
-			const cell_handle_t& c(ei->first);
+			const cell_handle_t& c(ei->first);//包含这个边的对象索引序号
 			distsSq.Insert(normSq(CGAL2MVS<float>(c->vertex(ei->second)->point()) - CGAL2MVS<float>(c->vertex(ei->third)->point())));
 		}
 		const float sigma(SQRT(distsSq.GetMedian())*kSigma);
@@ -951,6 +995,8 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 		{
 		TD_TIMER_STARTD();
 		Util::Progress progress(_T("Points weighted"), delaunay.number_of_vertices());
+
+		//2.遍历所有的顶点
 		#ifdef DELAUNAY_USE_OPENMP
 		delaunay_t::Vertex_iterator vertexIter(delaunay.vertices_begin());
 		const int64_t nVerts(delaunay.number_of_vertices()+1);

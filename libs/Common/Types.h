@@ -424,7 +424,7 @@ typedef class GENERAL_API cList<uint64_t, uint64_t, 0>  Unsigned64Arr;
 typedef class GENERAL_API cList<size_t, size_t, 0>      SizeArr;
 typedef class GENERAL_API cList<int, int, 0>            IntArr;
 typedef class GENERAL_API cList<bool, bool, 0>          BoolArr;
-typedef class GENERAL_API cList<float, float, 0>        FloatArr;
+typedef class GENERAL_API cList<float, float, 0>        FloatArr;//第一个float表示这个队列存储的数据类型， 第二个float表示这个队列成员函数返回的数据类型！！本质上这就只是一个存储float的队列
 typedef class GENERAL_API cList<double, double, 0>      DoubleArr;
 
 } // namespace SEACAVE

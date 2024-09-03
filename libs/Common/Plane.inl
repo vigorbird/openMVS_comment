@@ -571,10 +571,11 @@ GCLASS TFrustum<TYPE,DIMS>::Classify(const SPHERE& s) const
 /**
  * Culls AABB to n sided frustum. Normals pointing outwards.
  * -> IN:  AABB    - bounding box to be tested
- *    OUT: VISIBLE - aabb totally inside frustum
- *         CLIPPED - aabb clipped by frustum
- *         CULLED  - aabb totally outside frustum
+ *    OUT: VISIBLE - aabb totally inside frustum 表示bounding box完全在椎体中
+ *         CLIPPED - aabb clipped by frustum 表示bounding box被椎体切分了
+ *         CULLED  - aabb totally outside frustum 表示bounding box完全在椎体外面
  */
+//输入一个aabbtree 判断这个aabbtree和椎体的几何关系
 template <typename TYPE, int DIMS>
 GCLASS TFrustum<TYPE,DIMS>::Classify(const AABB& aabb) const
 {

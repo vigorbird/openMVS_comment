@@ -304,6 +304,8 @@ public:
 		const TYPE invZ(INVERT(q.z));
 		return TPoint2<TYPE>(q.x*invZ, q.y*invZ);
 	}
+
+	//将点的坐标乘以相机的投影矩阵，得到相机坐标系下的坐标
 	template <typename TYPE>
 	inline TPoint3<TYPE> ProjectPointP3(const TPoint3<TYPE>& X) const {
 		const REAL* const p(P.val);

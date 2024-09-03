@@ -34,8 +34,8 @@ public:
 	enum { numScalar = DIMS+1 };
 	enum { numParams = numScalar-1 };
 
-	VECTOR	m_vN;	// plane normal vector
-	TYPE	m_fD;	// distance to origin
+	VECTOR	m_vN;	// plane normal vector 本质上是一个eigen向量
+	TYPE	m_fD;	// distance to origin 应该是一个double
 
 	//---------------------------------------
 
@@ -107,6 +107,7 @@ struct FitPlaneOnline {
 
 // Basic 3D frustum class
 // (represented as 6 planes oriented toward outside the frustum volume)
+//锥台是由六个面组成的
 template <typename TYPE, int DIMS=6>
 class TFrustum
 {
@@ -122,7 +123,7 @@ public:
 	typedef SEACAVE::TAABB<TYPE,3> AABB;
 	enum { numCorners = (1<<3) };
 
-	PLANE	m_planes[DIMS];	// left, right, top, bottom, near and far planes
+	PLANE	m_planes[DIMS];	// left, right, top, bottom, near and far planes 因此作者这里使用的是6个面
 
 	//---------------------------------------
 

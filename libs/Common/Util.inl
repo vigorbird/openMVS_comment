@@ -803,6 +803,7 @@ inline T DepthSimilarity(T d0, T d1) {
 	return ABS(d0-d1)/d0;
 	#endif
 }
+
 template<typename T>
 inline bool IsDepthSimilar(T d0, T d1, T threshold=T(0.01)) {
 	return DepthSimilarity(d0, d1) < threshold;
