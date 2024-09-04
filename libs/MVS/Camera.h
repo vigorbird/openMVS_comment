@@ -188,17 +188,19 @@ public:
 	}
 
 	// returns full K and the inverse of K (assuming standard K format)
+	//参考https://dsp.stackexchange.com/questions/6055/how-does-resizing-an-image-affect-the-intrinsic-camera-matrix#comment71853_6098
 	template<typename TYPE>
 	inline TMatrix<TYPE,3,3> GetK(uint32_t width, uint32_t height) const {
 		ASSERT(width>0 && height>0);
-		const float scale(GetNormalizationScale(width, height));
+		const float scale(GetNormalizationScale(width, height));//在width和height中选择一个最大值赋值给scale
 		if (K(0,2) != 0 || K(1,2) != 0)
-			return GetScaledK(scale);
+			return GetScaledK(scale);//这是一个和我们认知不一样的相机内参，作者这么做的好处是所有的像素全部可以归一化到[0-1]这样后面的像素阈值就比较好设置
 		ASSERT(ISZERO(K(0,1)));
 		return ComposeK(
 			TYPE(K(0,0)*scale), TYPE(K(1,1)*scale),
 			width, height );
 	}
+
 	template<typename TYPE>
 	inline TMatrix<TYPE,3,3> GetInvK(uint32_t width, uint32_t height) const {
 		ASSERT(width>0 && height>0);

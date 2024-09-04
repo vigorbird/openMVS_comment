@@ -53,9 +53,11 @@ struct MVS_API DenseDepthMapData;
 class MVS_API Scene
 {
 public:
+	//这三个变量在重建mesh时使用到了
 	PlatformArr platforms; // camera platforms, each containing the mounted cameras and all known poses
 	ImageArr images; // images, each referencing a platform's camera pose
 	PointCloud pointcloud; // point-cloud (sparse or dense), each containing the point position and the views seeing it
+	
 	Mesh mesh; // mesh, represented as vertices and triangles, constructed from the input point-cloud
 	OBB3f obb; // optional region-of-interest; oriented bounding box containing the entire scene
 

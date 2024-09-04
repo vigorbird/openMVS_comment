@@ -322,15 +322,16 @@ bool PointCloud::Load(const String& fileName)
 	}
 
 	// read PLY body
+	//遍历所有的顶点
 	for (int i = 0; i < ply.get_elements_count(); i++) {
 		int elem_count;
-		LPCSTR elem_name = ply.setup_element_read(i, &elem_count);
+		LPCSTR elem_name = ply.setup_element_read(i, &elem_count);//LPCSTR = const char *
 		if (PLY::equal_strings(BasicPLY::elem_names[0], elem_name)) {
 			BasicPLY::Vertex::InitLoadProps(ply, elem_count, points, colors, normals, pointViews, pointWeights);
 			BasicPLY::Vertex vertex;
 			for (int v=0; v<elem_count; ++v) {
 				ply.get_element(&vertex);
-				points[v] = vertex.p;
+				points[v] = vertex.p;//
 				if (!colors.empty())
 					colors[v] = vertex.c;
 				if (!normals.empty())

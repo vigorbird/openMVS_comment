@@ -77,7 +77,7 @@ public:
 public:
 	PointArr points;
 	PointViewArr pointViews; // array of views for each point (ordered increasing)，一个点可能被多帧观测到过，因此需要记录被哪些frame观测到过
-	PointWeightArr pointWeights;
+	PointWeightArr pointWeights;//在默认情况下点云的weight是空的
 	NormalArr normals;
 	ColorArr colors;
 

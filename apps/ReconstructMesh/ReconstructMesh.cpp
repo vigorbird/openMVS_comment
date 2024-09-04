@@ -108,6 +108,7 @@ bool Application::Initialize(size_t argc, LPCTSTR* argv)
 		("archive-type", boost::program_options::value(&OPT::nArchiveType)->default_value(ARCHIVE_MVS), "project archive type: -1-interface, 0-text, 1-binary, 2-compressed binary")
 		("process-priority", boost::program_options::value(&OPT::nProcessPriority)->default_value(-1), "process priority (below normal by default)")
 		("max-threads", boost::program_options::value(&OPT::nMaxThreads)->default_value(0), "maximum number of threads (0 for using all available cores)")
+		
 		#if TD_VERBOSE != TD_VERBOSE_OFF
 		("verbosity,v", boost::program_options::value(&g_nVerbosityLevel)->default_value(
 			#if TD_VERBOSE == TD_VERBOSE_DEBUG
@@ -117,6 +118,7 @@ bool Application::Initialize(size_t argc, LPCTSTR* argv)
 			#endif
 			), "verbosity level")
 		#endif
+
 		#ifdef _USE_CUDA
 		("cuda-device", boost::program_options::value(&CUDA::desiredDeviceID)->default_value(-1), "CUDA device number to be used to reconstruct the mesh (-2 - CPU processing, -1 - best GPU, >=0 - device index)")
 		#endif
@@ -214,7 +216,8 @@ bool Application::Initialize(size_t argc, LPCTSTR* argv)
 	if (OPT::strOutputFileName.empty())
 		OPT::strOutputFileName = Util::getFileFullName(OPT::strInputFileName) + _T("_mesh.mvs");
 
-	MVS::Initialize(APPNAME, OPT::nMaxThreads, OPT::nProcessPriority);//比较重要的函数！！！！！！！！！！！！！！
+	//这个函数看起来比较唬人，本质上就是设置了一个本进程的优先级
+	MVS::Initialize(APPNAME, OPT::nMaxThreads, OPT::nProcessPriority);
 	return true;
 }//end funtion Application::Initialize!!!!!
 
@@ -246,6 +249,8 @@ void Application::Finalize()
 // 3090 2680
 // 3600 2100
 // 3640 2190
+//这个函数的做作用是输入一个文件，文件中存储了图像的名称并且指定了哪些像素想要发射射线出去和mesh相交，将相交的3d点保存下来
+//这个函数有我们想用的一个非常重要的功能，就是一个射线出去和mesh相交得到交点
 bool Export3DProjections(Scene& scene, const String& inputFileName) {
 	SML smlPointList(_T("ImagePoints"));
 	smlPointList.Load(inputFileName);
@@ -341,37 +346,47 @@ bool Export3DProjections(Scene& scene, const String& inputFileName) {
 
 int main(int argc, LPCTSTR* argv)
 {
+	
 	#ifdef _DEBUGINFO
 	// set _crtBreakAlloc index to stop in <dbgheap.c> at allocation
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);// | _CRTDBG_CHECK_ALWAYS_DF);
 	#endif
 
+	//
 	Application application;
-	if (!application.Initialize(argc, argv))
+	if (!application.Initialize(argc, argv))//这个函数就是设置了一些输入变量，并设置了这个进程的系统优先级
 		return EXIT_FAILURE;
 
-	Scene scene(OPT::nMaxThreads);
+	Scene scene(OPT::nMaxThreads);//默认值是0,0表示使用系统中的所有的cpu资源！！
+
 	// load project
-	//加载之前的scene文件！！！！！！！！！！
+	//1.加载之前的scene文件！！！！！！！！！！
+	//fDecimateMesh = 1.0默认值
+	//nTargetFaceNum = 0 默认值
+	//fSplitMaxArea = 0 默认值
+	//加载mvs文件在scene中有包含了所有的信息
 	const Scene::SCENE_TYPE sceneType(scene.Load(MAKE_PATH_SAFE(OPT::strInputFileName),
 									  OPT::fSplitMaxArea > 0 || OPT::fDecimateMesh < 1 || OPT::nTargetFaceNum > 0 || !OPT::strImportROIFileName.empty()));
-	//如果scene加载不成功则直接退！！！！！！！！
 	if (sceneType == Scene::SCENE_NA)
 		return EXIT_FAILURE;
 	
-	//非常重要在这里加载了稠密点云！！！！！！！
+	//2.非常重要在这里加载了稠密点云！！！！！！！样例会进入这条件的
 	if (!OPT::strPointCloudFileName.empty() && 
 		(File::isFile(MAKE_PATH_SAFE(OPT::strPointCloudFileName)) ? !scene.pointcloud.Load(MAKE_PATH_SAFE(OPT::strPointCloudFileName)) :
 																	!scene.pointcloud.IsValid())) {
 		VERBOSE("error: cannot load point-cloud file");
 		return EXIT_FAILURE;
 	}
-	//加载mesh了！！！！！！！！！！！！！！！！！！
+	
+	//加载mesh，如果输入的mesh文件不为空则加载mehs文件，但是要注意如果加载了mesh文件，后面就不会再生成mesh了!!!
+	//如果你想要根据稠密点云生成mesh，所以默认是不会进入这个条件的
 	if (!OPT::strMeshFileName.empty() && !scene.mesh.Load(MAKE_PATH_SAFE(OPT::strMeshFileName))) {
 		VERBOSE("error: cannot load mesh file");
 		return EXIT_FAILURE;
 	}
+
 	const String baseFileName(MAKE_PATH_SAFE(Util::getFileFullName(OPT::strOutputFileName)));
+	//默认不进入这个条件
 	if (OPT::fSplitMaxArea > 0) {
 		// split mesh using max-area constraint
 		Mesh::FacesChunkArr chunks;
@@ -397,6 +412,7 @@ int main(int argc, LPCTSTR* argv)
 		}
 	}
 
+	//默认不进入这个条件
 	if (!OPT::strImagePointsFileName.empty() && !scene.mesh.IsEmpty()) {
 		Export3DProjections(scene, MAKE_PATH_SAFE(OPT::strImagePointsFileName));
 		return EXIT_SUCCESS;
@@ -441,6 +457,8 @@ int main(int argc, LPCTSTR* argv)
 				if (!imageData.IsValid())
 					continue;
 				// reset image resolution
+				//这个函数0表示对图像是否resize，false表示是否真的从硬盘加载
+				//这个函数的实际作用就是判断图像是否存在
 				if (!imageData.ReloadImage(0, false)) {
 					#ifdef RECMESH_USE_OPENMP
 					bAbort = true;
@@ -450,13 +468,15 @@ int main(int argc, LPCTSTR* argv)
 					return EXIT_FAILURE;
 					#endif
 				}
+				//为imageData中的成员变量camera赋值，好像这句话不是必要的，作者在load scene函数中进行了配置
 				imageData.UpdateCamera(scene.platforms);//获取图像结构！！！
 				// select neighbor views
 				if (imageData.neighbors.empty()) {
 					IndexArr points;
-					scene.SelectNeighborViews(idxImage, points);
+					//搜索 SelectNeighborViews(uint32_t ID, IndexArr& points
+					scene.SelectNeighborViews(idxImage, points);//为一张图像选择相邻的图像！！！！！！详见算法实现文档！！！核心功能就是挑选这个img根据分数从大到小得到neighbor
 				}
-			}//加载所有的图像结束！！！！！
+			}//加载所有的图像结束
 
 
 			#ifdef RECMESH_USE_OPENMP
@@ -465,7 +485,7 @@ int main(int argc, LPCTSTR* argv)
 			#endif
 			// reconstruct a coarse mesh from the given point-cloud
 			TD_TIMER_START();
-			if (OPT::bUseConstantWeight)
+			if (OPT::bUseConstantWeight)//默认这个条件是true!!!!!!!!!!!!!!!!
 				scene.pointcloud.pointWeights.Release();
 			
 			//2.加载完图像数据后，开始进行mehs重建！！！！！！非常重要的函数！！！！
@@ -478,10 +498,11 @@ int main(int argc, LPCTSTR* argv)
 										OPT::fQualityFactor))//默认值1.0， multiplier adjusting the quality weight considered during graph-cut
 				return EXIT_FAILURE;
 			VERBOSE("Mesh reconstruction completed: %u vertices, %u faces (%s)", scene.mesh.vertices.GetSize(), scene.mesh.faces.GetSize(), TD_TIMER_GET_FMT().c_str());
+			
 			#if TD_VERBOSE != TD_VERBOSE_OFF
 			if (VERBOSITY_LEVEL > 2) {
 				// dump raw mesh
-				scene.mesh.Save(baseFileName+_T("_raw")+OPT::strExportType);
+				scene.mesh.Save(baseFileName+_T("_raw")+OPT::strExportType);//默认输出格式是ply格式，没有经过mesh后处理过的mesh
 			}
 			#endif
 		} else if (!OPT::strMeshFileName.empty()) {
@@ -498,14 +519,30 @@ int main(int argc, LPCTSTR* argv)
 			VERBOSE("Mesh trimmed to ROI: %u vertices and %u faces removed (%s)",
 				numVertices-scene.mesh.vertices.size(), numFaces-scene.mesh.faces.size(), TD_TIMER_GET_FMT().c_str());
 		}
+
+		//下面是非常重要的生成mesh的后处理函数！！！！！！！！！
+		//nTargetFaceNum默认值是0
+		//fDecimateMesh默认值等于1
+		//fDecimate 默认值等于1，dsableed
 		const float fDecimate(OPT::nTargetFaceNum ? static_cast<float>(OPT::nTargetFaceNum) / scene.mesh.faces.size() : OPT::fDecimateMesh);
+		//fRemoveSpurious = 20 默认值
+		//bRemoveSpikes = true 默认值
+		//nCloseHoles = 30 默认值
+		//nSmoothMesh = 2 默认值
+		//fEdgeLength = 0 默认值，diabled
+		//1.RemoveSpurious + bRemoveSpikes + nCloseHoles + nSmoothMesh
 		scene.mesh.Clean(fDecimate, OPT::fRemoveSpurious, OPT::bRemoveSpikes, OPT::nCloseHoles, OPT::nSmoothMesh, OPT::fEdgeLength, false);
+		//2.                bRemoveSpikes + nCloseHoles 
 		scene.mesh.Clean(1.f, 0.f, OPT::bRemoveSpikes, OPT::nCloseHoles, 0u, 0.f, false); // extra cleaning trying to close more holes
+		//3.lastclean = true
 		scene.mesh.Clean(1.f, 0.f, false, 0u, 0u, 0.f, true); // extra cleaning to remove non-manifold problems created by closing holes
+		
 		scene.obb = initialOBB;
 
-		// save the final mesh 非常重要的保存结果！！！将最终生成的mesh进行了保存！！！！！！
+		// save the final mesh 非常重要的保存结果！！！将最终生成的mesh进行了保存！！！！！！默认格式是ply文件
 		scene.mesh.Save(baseFileName+OPT::strExportType);
+
+		//输出一些调试文件
 		#if TD_VERBOSE != TD_VERBOSE_OFF
 		if (VERBOSITY_LEVEL > 2)
 			scene.ExportCamerasMLP(baseFileName+_T(".mlp"), baseFileName+OPT::strExportType);
@@ -514,8 +551,10 @@ int main(int argc, LPCTSTR* argv)
 			scene.Save(baseFileName+_T(".mvs"), (ARCHIVE_TYPE)OPT::nArchiveType);
 	}//大的if结束！！！！！！
 
+	//默认不进入这个条件！
 	if (!OPT::strImagePointsFileName.empty()) {
-		//这个因该是将重建出来的mesh然后投影会图像，记录的是每个顶点投影到图像上的像素坐标！！！！！
+		//这个函数的做作用是输入一个文件，文件中存储了图像的名称并且指定了哪些像素想要发射射线出去和mesh相交，将相交的3d点保存下来
+		//这个函数有我们想用的一个非常重要的功能，就是一个射线出去和mesh相交得到交点
 		Export3DProjections(scene, MAKE_PATH_SAFE(OPT::strImagePointsFileName));
 		return EXIT_SUCCESS;
 	}

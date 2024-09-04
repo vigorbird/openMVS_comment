@@ -267,6 +267,8 @@ public:
 		#endif // _MSC_VER
 	}
 
+	//这个函数的作用是删除路径中的冗余分隔符
+	//如果输入的是/path//home，返回的是/path/home
 	static String& trimUnifySlash(String& path)
 	{
 		String::size_type start = 1;
@@ -277,6 +279,7 @@ public:
 				++start;
 		return path;
 	}
+
 	static String& ensureUnifySlash(String& path)
 	{
 		String::size_type start = 0;
@@ -284,6 +287,7 @@ public:
 			path[start] = PATH_SEPARATOR;
 		return trimUnifySlash(path);
 	}
+
 	static String& ensureUnifyReverseSlash(String& path)
 	{
 		String::size_type start = 0;

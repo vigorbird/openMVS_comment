@@ -76,27 +76,31 @@ bool Scene::ImagesHaveNeighbors() const
 }
 
 
+//非常重要的mvs文件输入格式
 bool Scene::LoadInterface(const String & fileName)
 {
 	TD_TIMER_STARTD();
 	Interface obj;
 
 	// serialize in the current state
-	if (!ARCHIVE::SerializeLoad(obj, fileName))
+	if (!ARCHIVE::SerializeLoad(obj, fileName))//我个人认为应该是不用看这里面的具体怎么实现的，我们只需要关心读取出来的数据是怎么样的即可！！！
 		return false;
 
 	// import platforms and cameras
 	ASSERT(!obj.platforms.empty());
 	platforms.reserve((uint32_t)obj.platforms.size());
+	//默认应该是只有一个platform！！！
 	for (const Interface::Platform& itPlatform: obj.platforms) {
 		Platform& platform = platforms.emplace_back();
 		platform.name = itPlatform.name;
 		platform.cameras.reserve((uint32_t)itPlatform.cameras.size());
+		//更新platform中的每个相机的标定参数
 		for (const Interface::Platform::Camera& itCamera: itPlatform.cameras) {
 			Platform::Camera& camera = platform.cameras.emplace_back();
-			camera.K = itCamera.K;
-			camera.R = itCamera.R;
-			camera.C = itCamera.C;
+			camera.K = itCamera.K;//相机内参矩阵
+			camera.R = itCamera.R;//相机在硬件平台的外参旋转矩阵
+			camera.C = itCamera.C;//相机的硬件平台的外参位置向量
+			//如果相机的长和宽等于0，则进入这个条件！
 			if (!itCamera.IsNormalized()) {
 				// normalize K
 				ASSERT(itCamera.HasResolution());
@@ -105,7 +109,9 @@ bool Scene::LoadInterface(const String & fileName)
 			DEBUG_EXTRA("Camera model loaded: platform %u; camera %2u; f %.3fx%.3f; poses %u", platforms.size()-1, platform.cameras.size()-1, camera.K(0,0), camera.K(1,1), itPlatform.poses.size());
 		}
 		ASSERT(platform.cameras.size() == itPlatform.cameras.size());
-		platform.poses.reserve((uint32_t)itPlatform.poses.size());
+
+		//更新platfrom中的pose
+		platform.poses.reserve((uint32_t)itPlatform.poses.size());		
 		for (const Interface::Platform::Pose& itPose: itPlatform.poses) {
 			Platform::Pose& pose = platform.poses.emplace_back();
 			pose.R = itPose.R;
@@ -113,6 +119,9 @@ bool Scene::LoadInterface(const String & fileName)
 		}
 		ASSERT(platform.poses.size() == itPlatform.poses.size());
 	}
+
+
+
 	ASSERT(platforms.size() == obj.platforms.size());
 	if (platforms.empty())
 		return false;
@@ -122,30 +131,36 @@ bool Scene::LoadInterface(const String & fileName)
 	size_t nTotalPixels(0);
 	ASSERT(!obj.images.empty());
 	images.reserve((uint32_t)obj.images.size());
+	//遍历序列化对象中的所有图像，然后更新scene中的images数据结构
 	for (const Interface::Image& image: obj.images) {
 		const uint32_t ID(images.size());
+		//生成一个imageData对象，对这个对象的属性赋值！！！
 		Image& imageData = images.emplace_back();
 		imageData.ID = (image.ID == NO_ID ? ID : image.ID);
+		//image中的name属性是绝对路径
 		imageData.name = image.name;
-		Util::ensureUnifySlash(imageData.name);
-		imageData.name = MAKE_PATH_FULL(WORKING_FOLDER_FULL, imageData.name);
+		Util::ensureUnifySlash(imageData.name);//删除路径中的冗余分隔符
+		imageData.name = MAKE_PATH_FULL(WORKING_FOLDER_FULL, imageData.name);//获取图像的绝对路径
+		//默认不使用
 		if (!image.maskName.empty()) {
 			imageData.maskName = image.maskName;
 			Util::ensureUnifySlash(imageData.maskName);
 			imageData.maskName = MAKE_PATH_FULL(WORKING_FOLDER_FULL, imageData.maskName);
 		}
+		//图像对应的位姿索引
 		imageData.poseID = image.poseID;
 		if (imageData.poseID == NO_ID) {
 			DEBUG_EXTRA("warning: uncalibrated image '%s'", image.name.c_str());
 			continue;
 		}
-		imageData.platformID = image.platformID;
-		imageData.cameraID = image.cameraID;
+
+		imageData.platformID = image.platformID;//这个image属于哪个平台的
+		imageData.cameraID = image.cameraID;//这个image属于硬件平台的哪个相机的
 		// init camera
 		const Interface::Platform::Camera& camera = obj.platforms[image.platformID].cameras[image.cameraID];
-		if (camera.HasResolution()) {
+		if (camera.HasResolution()) {//默认应该进入这个条件
 			// use stored resolution
-			imageData.width = camera.width;
+			imageData.width = camera.width;//设置图像的宽和高
 			imageData.height = camera.height;
 			imageData.scale = 1;
 		} else {
@@ -153,18 +168,22 @@ bool Scene::LoadInterface(const String & fileName)
 			if (!imageData.ReloadImage(0, false))
 				return false;
 		}
+		//为imageData中的成员变量camera赋值
+		//详见算法实现文档！！
 		imageData.UpdateCamera(platforms);
+
 		// init neighbors
-		imageData.neighbors.CopyOf(image.viewScores.data(), (uint32_t)image.viewScores.size());
-		imageData.avgDepth = image.avgDepth;
-		++nCalibratedImages;
-		nTotalPixels += imageData.width * imageData.height;
+		imageData.neighbors.CopyOf(image.viewScores.data(), (uint32_t)image.viewScores.size());//这个变量好像在mesh生成过程中有使用的！！！！！！！！
+		imageData.avgDepth = image.avgDepth;//好像这个变量在mesh生成过程中没有被使用！！！！
+		++nCalibratedImages;//这个变量只是用于debug
+		nTotalPixels += imageData.width * imageData.height;//这个变量只是用于debug
 		DEBUG_ULTIMATE("Image loaded %3u: %s", ID, Util::getFileNameExt(imageData.name).c_str());
 	}
 	if (images.size() < 2)
 		return false;
 
-	// import 3D points
+	// import 3D points 
+	//遍历序列中的所有顶点
 	if (!obj.vertices.empty()) {
 		bool bValidWeights(false);
 		pointcloud.points.resize(obj.vertices.size());
@@ -215,6 +234,8 @@ bool Scene::LoadInterface(const String & fileName)
 				pointcloud.points.size(), mesh.vertices.size(), mesh.faces.size());
 	return true;
 } // LoadInterface
+
+
 
 bool Scene::SaveInterface(const String & fileName, int version) const
 {
@@ -523,11 +544,13 @@ bool Scene::Import(const String& fileName)
 } // Import
 /*----------------------------------------------------------------*/
 
+
+//默认情况下好像 bImport = false
 Scene::SCENE_TYPE Scene::Load(const String& fileName, bool bImport)
 {
 	TD_TIMER_STARTD();
 	Release();
-
+	//如果cmake中找到了boost，那么就定义了这个宏
 	#ifdef _USE_BOOST
 	// open the input stream
 	std::ifstream fs(fileName, std::ios::in | std::ios::binary);
@@ -536,11 +559,12 @@ Scene::SCENE_TYPE Scene::Load(const String& fileName, bool bImport)
 	// load project header ID
 	char szHeader[4];
 	fs.read(szHeader, 4);
+	//正常情况下应该一定会进入这个条件
 	if (!fs || _tcsncmp(szHeader, PROJECT_ID, 4) != 0) {
 		fs.close();
 		if (bImport && Import(fileName))
 			return SCENE_IMPORT;
-		if (LoadInterface(fileName))
+		if (LoadInterface(fileName))//非常重要的函数！！！！！！！！！！！！！！！！
 			return SCENE_INTERFACE;
 		VERBOSE("error: invalid project");
 		return SCENE_NA;
@@ -559,7 +583,7 @@ Scene::SCENE_TYPE Scene::Load(const String& fileName, bool bImport)
 	uint64_t nReserved;
 	fs.read((char*)&nReserved, sizeof(uint64_t));
 	// serialize in the current state
-	if (!SerializeLoad(*this, fs, (ARCHIVE_TYPE)nType))
+	if (!SerializeLoad(*this, fs, (ARCHIVE_TYPE)nType))//这个函数好像没干啥活就是读了mvs文件的头信息
 		return SCENE_NA;
 	// init images
 	nCalibratedImages = 0;
@@ -580,13 +604,17 @@ Scene::SCENE_TYPE Scene::Load(const String& fileName, bool bImport)
 				pointcloud.points.GetSize(), mesh.vertices.GetSize(), mesh.faces.GetSize());
 	return SCENE_MVS;
 	#else
+	//默认应该不进入这个条件！！！！！
 	if (bImport && Import(fileName))
 		return SCENE_IMPORT;
+	//默认应该会进入这个条件
 	if (LoadInterface(fileName))
 		return SCENE_INTERFACE;
 	return SCENE_NA;
 	#endif
-} // Load
+} // Load function
+
+
 
 bool Scene::Save(const String& fileName, ARCHIVE_TYPE type) const
 {
@@ -798,6 +826,7 @@ bool Scene::EstimateNeighborViewsPointCloud(unsigned maxResolution)
 // extract also all 3D points seen by the reference image;
 // (inspired by: "Multi-View Stereo for Community Photo Collections", Goesele, 2007)
 //  - nInsideROI: 0 - ignore ROI, 1 - weight more ROI points, 2 - consider only ROI points
+//默认值 unsigned nMinViews = 3, unsigned nMinPointViews = 2, float fOptimAngle = FD2R(12), unsigned nInsideROI = 1
 bool Scene::SelectNeighborViews(uint32_t ID, IndexArr& points, unsigned nMinViews, unsigned nMinPointViews, float fOptimAngle, unsigned nInsideROI)
 {
 	ASSERT(points.empty());
@@ -822,6 +851,7 @@ bool Scene::SelectNeighborViews(uint32_t ID, IndexArr& points, unsigned nMinView
 	const float sigmaAngleSmall(-1.f/(2.f*SQUARE(fOptimAngle*0.38f)));
 	const float sigmaAngleLarge(-1.f/(2.f*SQUARE(fOptimAngle*0.7f)));
 	const bool bCheckInsideROI(nInsideROI > 0 && IsBounded());
+	//遍历所有的点云
 	FOREACH(idx, pointcloud.points) {
 		const PointCloud::ViewArr& views = pointcloud.pointViews[idx];
 		ASSERT(views.IsSorted());
@@ -916,6 +946,8 @@ bool Scene::SelectNeighborViews(uint32_t ID, IndexArr& points, unsigned nMinView
 		neighbors.Sort([](const ViewScore& i, const ViewScore& j) {
 			return i.score > j.score;
 		});
+
+		//不用管下面的代码  只是log输出
 		#if TD_VERBOSE != TD_VERBOSE_OFF
 		// print neighbor views
 		if (VERBOSITY_LEVEL > 2) {

@@ -208,6 +208,8 @@ ArchiveSave& ArchiveSave::operator & (const _Tp& obj) {
 	Save(*this, obj);
 	return *this;
 }
+
+//运算符
 template<typename _Tp>
 ArchiveLoad& ArchiveLoad::operator & (_Tp& obj) {
 	Load(*this, obj);
@@ -735,6 +737,7 @@ struct Interface
 		}
 	}
 
+	//
 	template <class Archive>
 	void serialize(Archive& ar, const unsigned int version) {
 		ar & platforms;
@@ -753,9 +756,12 @@ struct Interface
 				}
 			}
 		}
-	}
+	}//end function!
 };
 /*----------------------------------------------------------------*/
+
+
+
 
 
 // interface used to export/import MVS depth-map data;

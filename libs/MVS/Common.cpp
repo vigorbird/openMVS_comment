@@ -38,6 +38,7 @@
 
 using namespace MVS;
 
+//LPCTSTR = const char *
 void MVS::Initialize(LPCTSTR appname, unsigned nMaxThreads, int nProcessPriority) {
 	// initialize thread options
 	Process::setCurrentProcessPriority((Process::Priority)nProcessPriority);

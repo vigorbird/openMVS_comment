@@ -170,6 +170,7 @@ void MVS::DecomposeProjectionMatrix(const PMatrix& P, RMatrix& R, CMatrix& C)
 /*----------------------------------------------------------------*/
 
 // assemble projection matrix: P=KR[I|-C]
+//???????????
 void MVS::AssembleProjectionMatrix(const KMatrix& K, const RMatrix& R, const CMatrix& C, PMatrix& P)
 {
 	// compute temporary matrices
@@ -178,6 +179,7 @@ void MVS::AssembleProjectionMatrix(const KMatrix& K, const RMatrix& R, const CMa
 	cv::Mat(K * R).copyTo(M); //3x3
 	mP.col(3) = M * cv::Mat(-C); //3x1
 } // AssembleProjectionMatrix
+
 void MVS::AssembleProjectionMatrix(const RMatrix& R, const CMatrix& C, PMatrix& P)
 {
 	Eigen::Map<Matrix3x3::EMat,0,Eigen::Stride<4,0> >(P.val) = (const Matrix3x3::EMat)R;

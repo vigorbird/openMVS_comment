@@ -196,15 +196,17 @@ Camera Image::GetCamera(const PlatformArr& platforms, const Image8U::Size& resol
 	Camera camera(platform.GetCamera(cameraID, poseID));
 
 	// compute the unnormalized camera
-	camera.K = camera.GetK<REAL>(resolution.width, resolution.height);
+	camera.K = camera.GetK<REAL>(resolution.width, resolution.height);//注意这个是归一化之后的相机内参
 	camera.ComposeP();
 
 	return camera;
 } // GetCamera
+
 void Image::UpdateCamera(const PlatformArr& platforms)
 {
 	camera = GetCamera(platforms, Image8U::Size(width, height));
 } // UpdateCamera
+
 // computes camera's field of view for the given direction
 REAL Image::ComputeFOV(int dir) const
 {
