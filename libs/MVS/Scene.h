@@ -54,7 +54,7 @@ class MVS_API Scene
 {
 public:
 	//这三个变量在重建mesh时使用到了
-	PlatformArr platforms; // camera platforms, each containing the mounted cameras and all known poses
+	PlatformArr platforms; // camera platforms, each containing the mounted cameras and all known poses,存放位姿
 	ImageArr images; // images, each referencing a platform's camera pose
 	PointCloud pointcloud; // point-cloud (sparse or dense), each containing the point position and the views seeing it
 	
@@ -95,7 +95,7 @@ public:
 	bool EstimateNeighborViewsPointCloud(unsigned maxResolution=16);
 	void SampleMeshWithVisibility(unsigned maxResolution=320);
 	bool ExportMeshToDepthMaps(const String& baseName);
-
+	//这个函数是用来选择最佳邻域帧的
 	bool SelectNeighborViews(uint32_t ID, IndexArr& points, unsigned nMinViews = 3, unsigned nMinPointViews = 2, float fOptimAngle = FD2R(12), unsigned nInsideROI = 1);
 	void SelectNeighborViews(unsigned nMinViews = 3, unsigned nMinPointViews = 2, float fOptimAngle = FD2R(12), unsigned nInsideROI = 1);
 	static bool FilterNeighborViews(ViewScoreArr& neighbors, float fMinArea=0.1f, float fMinScale=0.2f, float fMaxScale=2.4f, float fMinAngle=FD2R(3), float fMaxAngle=FD2R(45), unsigned nMaxViews=12);

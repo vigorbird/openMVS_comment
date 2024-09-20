@@ -51,7 +51,7 @@ namespace MVS {
 class MVS_API PointCloud
 {
 public:
-	typedef IDX Index;
+	typedef IDX Index;//IDX = size_t
 
 	typedef TPoint3<float> Point;
 	typedef CLISTDEF0IDX(Point,Index) PointArr;

@@ -217,6 +217,7 @@ typedef float edge_cap_t;
 #ifdef DELAUNAY_WEAKSURF
 struct view_info_t;
 #endif
+//cgal数据结构中，每个顶点坐标除了xyz还有一些额外的属性信息，这个就是作者自己定义的额外属性信息，保存了每个顶点被哪些帧观测到过
 struct vert_info_t {
 	typedef edge_cap_t Type;
 	struct view_t {
@@ -240,19 +241,19 @@ struct vert_info_t {
 	inline vert_info_t() {} //默认启用这个代码！！！
 	#endif
 
-	//为这个顶点添加新的观测view
+	//为这个顶点添加idxPoint顶点的观测view，详见算法是实现文档！！！
 	void InsertViews(const PointCloud& pc, PointCloud::Index idxPoint) {
 		const PointCloud::ViewArr& _views = pc.pointViews[idxPoint];//看到这个点的所有观测！！！
 		ASSERT(!_views.IsEmpty());
 		const PointCloud::WeightArr* pweights(pc.pointWeights.IsEmpty() ? NULL : pc.pointWeights.Begin()+idxPoint);
 		ASSERT(pweights == NULL || _views.GetSize() == pweights->GetSize());
+		//遍历 idxPoint的所有观测！
 		FOREACH(i, _views) {
 			const PointCloud::View viewID(_views[i]);
 			const PointCloud::Weight weight(pweights ? (*pweights)[i] : PointCloud::Weight(1));
 			// insert viewID in increasing order
-			const uint32_t idx(views.FindFirstEqlGreater(viewID));
-			//进入这个条件表示在队列中找到了大于viewID的序号！！！
-			if (idx < views.GetSize() && views[idx] == viewID) {
+			const uint32_t idx(views.FindFirstEqlGreater(viewID));//这个功能是要插入的观测是否现存在view中
+			if (idx < views.GetSize() && views[idx] == viewID) {//表示已经有了view，则只要更新权重即可
 				// the new view is already in the array
 				ASSERT(views.FindFirst(viewID) == idx);
 				// update point's weight
@@ -269,11 +270,12 @@ struct vert_info_t {
 };
 
 //作者自己定义的一个cell中包含的信息！！！
+//这个数据结构对应了图割算法中的节点的数据类型！！
 struct cell_info_t {
 	typedef edge_cap_t Type;
-	Type f[4]; // faces' weight from the cell outwards
-	Type s; // cell's weight towards s-source，这个属性在图割算法中被使用，告知这个cell属于source的概率
-	Type t; // cell's weight towards t-sink，这个属性在在图割算法中被使用，告知这个cell属于sink的概率
+	Type f[4]; // faces' weight from the cell outwards 四面体四个面，在图割算法中被抽象成了边的概念，因此需要知道边的权重
+	Type s; // cell's weight towards s-source，这个属性在图割算法中被使用，告知这个cell属于source的概率，source表示这个cell在外面
+	Type t; // cell's weight towards t-sink，这个属性在在图割算法中被使用，告知这个cell属于sink的概率，t表示这个cell在里面
 	inline const Type* ptr() const { return f; }
 	inline Type* ptr() { return f; }
 };
@@ -281,7 +283,8 @@ struct cell_info_t {
 // kernel_t = CGAL::Exact_predicates_inexact_constructions_kernel
 //cell_size_t = uint32
 //需要非常注意vert_info_t数据类型！！！！！这个数据类型是作者自己定义的，就在这个文件中被使用了！！！
-typedef CGAL::Triangulation_vertex_base_with_info_3<vert_info_t, kernel_t> vertex_base_t;
+//vert_info_t:cgal数据结构中，每个顶点坐标除了xyz还有一些额外的属性信息，这个就是作者自己定义的额外属性信息，保存了每个顶点被哪些帧观测到过
+typedef CGAL::Triangulation_vertex_base_with_info_3<vert_info_t, kernel_t> vertex_base_t;//需要特别注意！！！cgal中德劳内三角形数据结构
 typedef CGAL::Triangulation_cell_base_with_info_3<cell_size_t, kernel_t> cell_base_t;
 typedef CGAL::Triangulation_data_structure_3<vertex_base_t, cell_base_t> triangulation_data_structure_t;
 typedef CGAL::Delaunay_triangulation_3<kernel_t, triangulation_data_structure_t, CGAL::Compact_location> delaunay_t;
@@ -307,10 +310,13 @@ void vert_info_t::AllocateInfo() {
 }
 #endif
 
+//如果相机在mesh的凸包外，那么facets存储的是看到的面
+//如果在凸包内，那么facets存储的是相机所在的cell的4个面
 struct camera_cell_t {
-	cell_handle_t cell; // cell containing the camera
+	cell_handle_t cell; // cell containing the camera 相机原点所在的cell
 	std::vector<facet_t> facets; // all facets on the convex-hull in view of the camera (ordered by importance)
 };
+
 
 struct adjacent_vertex_back_inserter_t {
 	const delaunay_t& delaunay;
@@ -404,15 +410,16 @@ inline bool checkPointInside(const point_t& a, const point_t& b, const point_t& 
 // find all facets on the convex-hull and inside the camera frustum,
 // else return all four cell's facets
 //这个函数的作用是，先根据相机生成一个视椎，然后遍历所有的面片
-//遍历面片中的每个面片，用面片中的三个顶点构建bodning box，判断视椎能够看到这个bounding box
-//如果能够看到这个bounding box则将面面片压入到facets中，并返回
+//遍历面片中的每个面片，用面片中的三个顶点构建aabb bodning box，判断视椎能够看到这个aabb bounding box
+//如果能够看到这个aabb bounding box则将面面片压入到facets中，并返回
 template <int FacetOrientation>
 void fetchCellFacets(const delaunay_t& Tr, 
-					const std::vector<facet_t>& hullFacets, //这个数据结构是cgal的面片数据结构！！！
+					const std::vector<facet_t>& hullFacets, //这个数据结构是cgal的面片数据结构！！！空间中的所有面片！！！
 					const cell_handle_t& cell, 
 					const Image& imageData, 
 					std::vector<facet_t>& facets)//返回的结果，被这个相机看到的面片，这个是cgal的数据结构
 {
+	//如果不在凸包内部，则只需找到这个cell对应的四个face
 	if (!Tr.is_infinite(cell)) {
 		// store all 4 facets of the cell
 		for (int i=0; i<4; ++i) {
@@ -426,14 +433,15 @@ void fetchCellFacets(const delaunay_t& Tr,
 	// create the 4 frustum planes
 	ASSERT(facets.empty());
 	//REAL = double
-	//0和1表示椎体的深度
+	//0和1表示椎体的深度，视椎的结构体是作者自己实现的
 	const TFrustum<REAL,4> frustum(imageData.camera.P, imageData.width, imageData.height, 0, 1);//P是投影矩阵，width和height是图像的宽和高
 	// loop over all cells
 	const point_t ptOrigin(MVS2CGAL(imageData.camera.C));//C表示的是相机的位置
 	for (const facet_t& face: hullFacets) {
 		// add face if visible
 		const triangle_t verts(Tr.triangle(face));//这个是cgal的函数，输入的是面片，返回的是这个面片对应的三个顶点
-		if (orientation(verts[0], verts[1], verts[2], ptOrigin) != FacetOrientation)/根据输入的三个顶点所形成的面片信息，判断输入的点p是否在这平面上，在平面外，在平面内？
+		//输入的是三角面片的有顺序的点，这个是判断是否能够穿透mesh看到这个面片
+		if (orientation(verts[0], verts[1], verts[2], ptOrigin) != FacetOrientation)//根据输入的三个顶点所形成的面片信息，判断输入的点p是否在这平面上，在平面外，在平面内？
 			continue;
 		AABB3 ab(CGAL2MVS<REAL>(verts[0]));
 		for (int i=1; i<3; ++i)
@@ -563,7 +571,8 @@ int intersect(const triangle_t& t, const segment_t& s, int coplanar[3])
 //  out_facets [out] : vector of facets to check at next step (can be in_facets)
 //  out_inter [out] : kind of intersection
 // return false if no intersection found and the end of the segment was not reached
-//输入的是全量的德劳内三角形和部分面片in_facets。给定一个线段判断和这些面片的相交关系
+//输入的是全量的德劳内三角形和待确认要被分割的面片in_facets。给定一个线段判断和这些面片的相交关系
+//inter = 相交信息 ；out_facets = 下一步要被分割的面片信息
 bool intersect(const delaunay_t& Tr, const segment_t& seg, const std::vector<facet_t>& in_facets, 
 				std::vector<facet_t>& out_facets, intersection_t& inter)
 {
@@ -811,13 +820,14 @@ float computePlaneSphereAngle(const delaunay_t& Tr, const facet_t& facet)
 // Finally, graph-cut algorithm is used to split the tetrahedrons in inside and outside,
 // and the surface is such extracted.
 //ReconstructMesh实现
+//distInsert：控制插入点距离阈值的参数，如果太大则一个点会覆盖范围比较大
 bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance in pixels between the projection of two 3D points to consider them different while triangulating
-							bool bUseFreeSpaceSupport, //默认值是false
+							bool bUseFreeSpaceSupport, //默认值是false，是否使用弱支持区域功能，就是对edge是否属于内部mesh的权重再矫正一下
 							bool bUseOnlyROI, //默认值是false
 							unsigned nItersFixNonManifold,
 							float kSigma, float kQual, float kb,
 							float kf, float kRel, float kAbs, float kOutl,
-							float kInf
+							float kInf//cell如果是外表面给s进行的赋值
 )
 {
 	using namespace DELAUNAY;
@@ -826,8 +836,8 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 
 	// 1.create the Delaunay triangulation
 	delaunay_t delaunay;
-	std::vector<cell_info_t> infoCells;
-	std::vector<camera_cell_t> camCells;
+	std::vector<cell_info_t> infoCells;//用于图割算法的cell相关信息
+	std::vector<camera_cell_t> camCells;//每个相机能看到哪些面片
 	std::vector<facet_t> hullFacets;
 	{
 		TD_TIMER_STARTD();
@@ -850,64 +860,78 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 
 		//2. sort vertices
 		//CGAL::spatial_sort是一个用于对几何对象进行空间排序的函数。它基于四叉树数据结构，可以将空间划分为四个象限，然后递归地对每个象限进行排序。
-		//空间排序的目的是确定对象的相对位置关系，以便在几何计算中按照特定的顺序处理这些对象。
+		//空间排序的目的是确定对象的相对位置关系，以便在顺序插入时，两个相邻的点在几何上有较大概率的接近
 		typedef CGAL::Spatial_sort_traits_adapter_3<delaunay_t::Geom_traits, point_t*> Search_traits;
 		CGAL::spatial_sort(indices.begin(), indices.end(), Search_traits(&vertices[0], delaunay.geom_traits()));
 		
 		
 		// insert vertices
 		Util::Progress progress(_T("Points inserted"), indices.size());
-		const float distInsertSq(SQUARE(distInsert));
-		vertex_handle_t hint;//这个是cgal的数据格式， 存储的是顶点的句柄
+		const float distInsertSq(SQUARE(distInsert));//设置的阈值
+		vertex_handle_t hint;//这个是cgal的数据格式， 存储的是德劳内三角形数据结构中顶点的句柄
 		delaunay_t::Locate_type lt;
 		int li, lj;
-		//3.遍历所有在boundingbox中的所有点，
+		//3.遍历排序之后的点，将这些点逐个插入到cgal的德劳内三角形数据结构中
+		//在增量式插入点形成德劳内三角形的过程中，需要对新插入的点使用cgal函数判断新插入点是在现有四面体的几何关系（在内部、在面上，边上，或是和现有的顶点重合）
+		//如果几何关系不是“和现有的顶点重合”则：
+		//并返回新插入点距离最近的cell，并根据这个最近的cell找到距离哪个顶点最近
+		//遍历看到过当前要插入这个点的所有观测视角，并将最近点和当前点投影到固定的视角下，
+		//然后判断深度是否相似，只有深度不相似才能向德劳内数据结构加入当前点
+		//需要额外注意的是，只要一个深度不相同就可以插入!!!
+		//如果无法插入那么更新在德劳内数据结构中最近顶点的观测
+		//如果能够插入那么更新德劳内插入点顶点的观测信息
 		std::for_each(indices.cbegin(), indices.cend(), [&](size_t idx) {
 			const point_t& p = vertices[idx];
 			const PointCloud::Point& point = pointcloud.points[idx];
-			const PointCloud::ViewArr& views = pointcloud.pointViews[idx];//记录了这个点被哪些帧观测到过
+			const PointCloud::ViewArr& views = pointcloud.pointViews[idx];//记录了这个点被哪些帧观测到过这个点
 			ASSERT(!views.IsEmpty());
-			if (hint == vertex_handle_t()) {
+			if (hint == vertex_handle_t()) {//表示第一个点，则直接插入
 				// this is the first point,
 				// insert it
 				hint = delaunay.insert(p);//这个是cgal的接口函数！！！！向德劳内数据结构插入顶点
 				ASSERT(hint != vertex_handle_t());
 			} else
-			if (distInsert <= 0) {//默认应该永远不会进入这个条件！！！
+			if (distInsert <= 0) {//默认应该永远不会进入这个条件！！！如果设置为0，则无脑将所有的点都插入到德劳内三角形中
 				// insert all points
 				hint = delaunay.insert(p, hint);
 				ASSERT(hint != vertex_handle_t());
 			} else {
 				// locate cell containing this point
-				//lt = 用于输出点的位置类型。可能的值包括：点在一个单元内部（如三角形或四面体）、点在一个面上（在三维网格中，即在某个三角形面上）、点在一个边上、点在一个顶点上。
-				//这个函数主要确定这个顶点在哪个cell中
-				const cell_handle_t c(delaunay.locate(p, lt, li, lj, hint->cell()));//cgal函数，
-				if (lt == delaunay_t::VERTEX) {
+				//lt = 用于输出点的位置类型。可能的值包括：点在一个四面体内部or外部（四面体）、点在一个面上（在三维网格中，即在某个三角形面上）、点在一个边上、点在一个顶点上。
+				//p = 现在想要插入的点的坐标， 目的是得到相对于上个插入cell的相对位置关系
+				//其中输入的hint->cell表示搜索的起始cell，指定搜索的起始单元。如果提供了 start，算法将从该单元开始搜索，而不是从整个三角剖分的开始处开始搜索。
+				//返回的结果是一个cell的句柄，距离p最近的那个cell
+				const cell_handle_t c(delaunay.locate(p, lt, li, lj, hint->cell()));//cgal函数
+
+				if (lt == delaunay_t::VERTEX) {//现在要插入的点在上个插入cell的顶点上，那么表示是一个重复点
 					// duplicate point, nothing to insert,
 					// just update its visibility info
 					hint = c->vertex(li);
 					ASSERT(hint != delaunay.infinite_vertex());
 				} else {
+					//插入第二个点以及后面所有的点会进入这个条件！！！！
 					// locate the nearest vertex
 					vertex_handle_t nearest;
-					if (delaunay.dimension() < 3) {
+					if (delaunay.dimension() < 3) {//如果整个空间四面体数量非常小小于3的话，就暴力搜索逐个查找
 						// use a brute-force algorithm if dimension < 3
+						//找到每个点与当前点p进行比较，找到距离p最近的那个点，并赋值给inserter
 						delaunay_t::Finite_vertices_iterator vit = delaunay.finite_vertices_begin();
 						nearest = vit;
 						++vit;
 						adjacent_vertex_back_inserter_t inserter(delaunay, p, nearest);
 						for (delaunay_t::Finite_vertices_iterator end = delaunay.finite_vertices_end(); vit != end; ++vit)
 							inserter = vit;
-					} else {
+					} else {//空间中的四面体数量大于3，就不能暴力查找了要不然太耗时
 						// - start with the closest vertex from the located cell
 						// - repeatedly take the nearest of its incident vertices if any
 						// - if not, we're done
 						ASSERT(c != cell_handle_t());
 						//cell c中哪个顶点距离p点位置最近，并返回这个点
-						nearest = delaunay.nearest_vertex_in_cell(p, c);//p是这个顶点的位置， c是这个顶点所在的cell
+						nearest = delaunay.nearest_vertex_in_cell(p, c);//p是这个顶点的位置， c是距离当前点最近的cell
+						//从这个最近点的邻域点查找比最近点还要近的点，如果有则更新最近点，重复直到没有
 						while (true) {
 							const vertex_handle_t v(nearest);
-							
+							//搜索 nearest
 							delaunay.adjacent_vertices(nearest, adjacent_vertex_back_inserter_t(delaunay, p, nearest));
 							if (v == nearest)
 								break;
@@ -917,7 +941,9 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 					ASSERT(nearest == delaunay.nearest_vertex(p, hint->cell()));
 					hint = nearest;
 					// check if point is far enough to all existing points
-					//遍历看到这个点的所有视角
+					//遍历看到过当前要插入这个点的所有观测视角，并将最近点和当前点投影到固定的视角下，
+					//然后判断深度是否相似，只有深度不相似才能向德劳内数据结构加入当前点
+					//需要额外注意的是，只要一个深度不相同就可以插入!!!
 					FOREACHPTR(pViewID, views) {
 						const Image& imageData = images[*pViewID];
 						const Point3f pn(imageData.camera.ProjectPointP3(point));
@@ -927,15 +953,17 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 						if (!IsDepthSimilar(pn.z, pe.z) || normSq(Point2f(pn)-Point2f(pe)) > distInsertSq) {
 							// point far enough to an existing point,
 							// insert as a new point
-							hint = delaunay.insert(p, lt, c, li, lj);
+							//详见算法实现文档
+							hint = delaunay.insert(p, lt, c, li, lj);//向德劳内结构插入一个顶点, 返回的是顶点的句柄
 							ASSERT(hint != vertex_handle_t());
-							break;
+							break;//只要有一个相似，那么就直接退出！！
 						}
 					}
-				}
+				}//end if //插入第二个点以及后面所有的点会进入这个条件！！！！
 			}
+			
 			// update point visibility info
-			hint->info().InsertViews(pointcloud, idx);//向这个顶点添加新的观测，一个作者自己写的小函数！！！
+			hint->info().InsertViews(pointcloud, idx);//向hint这个顶点添加idx顶点的观测，比较重要的函数！！！！！
 			++progress;
 		});
 		progress.close();
@@ -946,9 +974,9 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 		// loop over all cells and store the finite facet of the infinite cells
 		//前面已经将点插入到了德劳内的数据结构中，并生成了cell，遍历所有cell，再遍历每个cell中的4个face
 		//然后将那些不是infinite的cell推入hullFacets中
-		const size_t numNodes(delaunay.number_of_cells());//这个是cgal中的函数！！！！！详见算法实现文档
-		infoCells.resize(numNodes);//infoCells的大小等于德劳内结构中的所有cell相同
+		const size_t numNodes(delaunay.number_of_cells());//这个是cgal中的函数，四面体的个数
 		//infoCells = 开始填充的起始点。
+		infoCells.resize(numNodes);//infoCells的大小等于德劳内结构中的所有cell相同
 		//0 表示要填充的值
 		//最后一个参数表示赋值多少个字节
 		memset(&infoCells[0], 0, sizeof(cell_info_t)*numNodes);
@@ -969,7 +997,8 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 			}
 		}
 		// find all cells containing a camera
-		//遍历所有的图像，判断相机是否能看到hullFacets中的面片，被观测到的面片会被标注出来
+		//遍历所有的图像，收集相机看到的hullFacets中的面片
+		//并更新每个cell中属于外面的概率赋初值。
 		camCells.resize(images.GetSize());
 		FOREACH(i, images) {
 			const Image& imageData = images[i];
@@ -977,15 +1006,20 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 				continue;
 			const Camera& camera = imageData.camera;
 			camera_cell_t& camCell = camCells[i];
-			camCell.cell = delaunay.locate(MVS2CGAL(camera.C));//C表示是位置 返回的数据类型也是cgal的类型
+			camCell.cell = delaunay.locate(MVS2CGAL(camera.C));//C表示是位置 返回的数据类型也是cgal的类型，相机原点坐在的cell句柄
 			ASSERT(camCell.cell != cell_handle_t());
 			//获取这个相机看到了哪些面片，相对比较重要的函数！！！！
-			fetchCellFacets<CGAL::POSITIVE>(delaunay, hullFacets, camCell.cell, imageData, camCell.facets);
+			//输入的数据：delaunay = 全局的德劳内三角形数据结果
+			//hullFacets:所有的面片
+			//imageData:输入的图像相关信息
+			//camCell.facets:输出结果，这个相机看到了哪些面片
+			fetchCellFacets<CGAL::POSITIVE>(delaunay, hullFacets, camCell.cell, imageData, //inout
+											camCell.facets);//output
 
 			// link all cells contained by the camera to the source
 			//遍历这些看到的所有面片，然后标注哪些面片被观测到了
 			for (const facet_t& f: camCell.facets)
-				infoCells[f.first->info()].s = kInf;
+				infoCells[f.first->info()].s = kInf;//将那些被看到的面片取出来，facet数据结构的first变量表示属于哪个cell，cell->info对应的是cell的索引
 		}
 
 		DEBUG_EXTRA("Delaunay tetrahedralization completed: %u points -> %u vertices, %u (+%u) cells, %u (+%u) faces (%s)", indices.size(), delaunay.number_of_vertices(), delaunay.number_of_finite_cells(), delaunay.number_of_cells()-delaunay.number_of_finite_cells(), delaunay.number_of_finite_facets(), delaunay.number_of_facets()-delaunay.number_of_finite_facets(), TD_TIMER_GET_FMT().c_str());
@@ -993,11 +1027,12 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 
 	// for every camera-point ray intersect it with the tetrahedrons(四面体) and
 	// add alpha_vis(point) to cell's directed edge in the graph
-	//每个顶点都被某帧观测到了，然后观测帧和mesh会构建出一个ray，判断ray和mesh的相交关系，然后更新每个cell的权重！！！
+	//每个顶点被某帧观测到，然后观测帧和顶点会构建出一个ray，判断ray和mesh的相交关系，然后更新图割的node边的权重(为图割算法边的权重进行准备)
+	//
 	{
 		TD_TIMER_STARTD();
 
-		//2.1 先计算所有边的长度，然后得到一个中间的长度，并乘以一个系数得到一个阈值inv2SigmaSq
+		//2.1 先计算所有德劳内所有三角形edge的长度，然后得到一个中间的长度，并乘以一个系数得到一个阈值inv2SigmaSq
 		// estimate the size of the smallest reconstructible object
 		FloatArr distsSq(0, delaunay.number_of_edges());//记录空间中所有的边的长度
 		//调用cgal的成员函数，遍历所有的边
@@ -1010,13 +1045,12 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 		distsSq.Release();
 
 		std::vector<facet_t> facets;
-
 		// compute the weights for each edge
 		{
 				TD_TIMER_STARTD();
 				Util::Progress progress(_T("Points weighted"), delaunay.number_of_vertices());
 
-				//2.2 遍历所有的顶点
+				
 				#ifdef DELAUNAY_USE_OPENMP
 				delaunay_t::Vertex_iterator vertexIter(delaunay.vertices_begin());
 				const int64_t nVerts(delaunay.number_of_vertices()+1);
@@ -1026,6 +1060,7 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 					#pragma omp critical
 					vi = vertexIter++;
 				#else
+				//2.2 遍历所有的顶点
 				for (delaunay_t::Vertex_iterator vi=delaunay.vertices_begin(), vie=delaunay.vertices_end(); vi!=vie; ++vi) {
 				#endif
 					vert_info_t& vert(vi->info());
@@ -1055,16 +1090,21 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 						// find faces intersected by the camera-point segment
 						const segment_t segCamPoint(MVS2CGAL(camera.C), p);//构成的线段！！！
 						//非常重要的函数！！！！！！！！！！！！详见算法实现文档
-						if (!intersect(delaunay, segCamPoint, camCell.facets, //input camCell.facets应该是这个camera能看到的所有面片
+						//寻找与线段相交的面片，并返回下一个待check是否相交的面片，inter的存储是
+						//camCell.facets是这个camera能看到的所有面片
+						if (!intersect(delaunay, segCamPoint, camCell.facets, //input 
 										facets, inter))//output
 							continue;
 						do {
 							// assign score, weighted by the distance from the point to the intersection
-							const edge_cap_t w(alpha_vis*(1.f-EXP(-SQUARE((float)inter.dist)*inv2SigmaSq)));//edge_cap_t = float
-							edge_cap_t& f(infoCells[inter.facet.first->info()].f[inter.facet.second]);//注意这里是引用
+							//dist距离越大则得到的数值也越大
+							const edge_cap_t w(alpha_vis*(1.f-EXP(-SQUARE((float)inter.dist)*inv2SigmaSq)));//edge_cap_t = float 属于内面的权重
+							edge_cap_t& f(infoCells[inter.facet.first->info()].f[inter.facet.second]);//注意这里是引用，先取到和哪个cell相交，然后从cell中取出和哪个面相交的权重
 							#ifdef DELAUNAY_USE_OPENMP
 							#pragma omp atomic
 							#endif
+							//f是cell中的四个面某个面的权重，用于图割算法
+							//权重越大越不可能被切割
 							f += w;//核心目的是为了更新这个变量！！！！！！！更新了权重
 						} while (intersect(delaunay, segCamPoint, facets, facets, inter));
 
@@ -1073,13 +1113,15 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 						//默认进入这个条件！！
 						#ifdef DELAUNAY_WEAKSURF
 						ASSERT(vert.viewsInfo[v].cell2Cam == NULL);
-						vert.viewsInfo[v].cell2Cam = inter.facet.first;//核心目的是为了更新这个变量！！！！！！！虽然这个变量被更新了，但是实际默认并没有使用这个变量
+						vert.viewsInfo[v].cell2Cam = inter.facet.first;//核心目的是为了更新这个变量！！！！！！！虽然这个变量被更新了，只有虚弱support选项开启了才会启用这个变量
 						#endif
 
 						// find faces intersected by the endpoint-point segment
+						//向线段后面取一段，然后判断向后取的这段和哪些面片相交
+						//增大相交cell的在里面的概率
 						inter.dist = FLT_MAX; 
 						inter.bigger = false;
-						const Point3 endPoint(pt+vecCamPoint*(invLenCamPoint*sigma));
+						const Point3 endPoint(pt+vecCamPoint*(invLenCamPoint*sigma));//向后取一段的点被称为end_point
 						const segment_t segEndPoint(MVS2CGAL(endPoint), p);
 						const cell_handle_t endCell(delaunay.locate(segEndPoint.source(), vi->cell()));
 						ASSERT(endCell != cell_handle_t());
@@ -1089,7 +1131,9 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 						#ifdef DELAUNAY_USE_OPENMP
 						#pragma omp atomic
 						#endif
+						//表示这个cell在里面的概率
 						t += alpha_vis;//核心目的是为了更新这个变量！！！！！！！
+						//然后更新这个线段所有face边的权重
 						while (intersect(delaunay, segEndPoint, facets, //input
 										facets, inter)) {//output 
 							// assign score, weighted by the distance from the point to the intersection
@@ -1099,6 +1143,7 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 							#ifdef DELAUNAY_USE_OPENMP
 							#pragma omp atomic
 							#endif
+							//权重越大越不可能被切割
 							f += w;//核心目的是为了更新这个变量！！！！！！！
 						}
 						ASSERT(facets.empty() && inter.type == intersection_t::VERTEX && inter.v1 == vi);
@@ -1212,7 +1257,7 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 		for (delaunay_t::All_cells_iterator ci=delaunay.all_cells_begin(), ce=delaunay.all_cells_end(); ci!=ce; ++ci) {
 			const cell_size_t ciID(ci->info());
 			const cell_info_t& ciInfo(infoCells[ciID]);
-			graph.AddNode(ciID, ciInfo.s, MINF(ciInfo.t, maxCap));
+			graph.AddNode(ciID, ciInfo.s, MINF(ciInfo.t, maxCap));//添加节点
 			//遍历和这个cell相邻的4个cell
 			for (int i=0; i<4; ++i) {
 				const cell_handle_t cj(ci->neighbor(i));
@@ -1221,8 +1266,9 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 				const cell_info_t& cjInfo(infoCells[cjID]);
 				const int j(cj->index(ci));
 				//computePlaneSphereAngle比较重要的函数！！！！！！！！！！！！！！！！
-				const edge_cap_t q((1.f - MINF(computePlaneSphereAngle(delaunay, facet_t(ci,i)), computePlaneSphereAngle(delaunay, facet_t(cj,j))))*kQual);
-				graph.AddEdge(ciID, cjID, ciInfo.f[i]+q, cjInfo.f[j]+q);
+				const edge_cap_t q((1.f - MINF(computePlaneSphereAngle(delaunay, facet_t(ci,i)), 
+												computePlaneSphereAngle(delaunay, facet_t(cj,j))))*kQual);
+				graph.AddEdge(ciID, cjID, ciInfo.f[i]+q, cjInfo.f[j]+q);//添加边
 			}
 		}
 		infoCells.clear();
@@ -1246,9 +1292,9 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 				if (delaunay.is_infinite(ci, i)) continue;
 				const cell_handle_t cj(ci->neighbor(i));
 				const cell_size_t cjID(cj->info());
-				if (ciID < cjID) continue;
+				if (ciID < cjID) continue;//非常重要！！ 为啥两个id还要比大小？？？？？
 				const bool ciType(graph.IsNodeOnSrcSide(ciID));
-				if (ciType == graph.IsNodeOnSrcSide(cjID)) continue;
+				if (ciType == graph.IsNodeOnSrcSide(cjID)) continue;//我们要找的是边缘cell
 				Mesh::Face& face = mesh.faces.AddEmpty();//对face进行数据修改！！！！！
 				const triangle_vhandles_t tri(getTriangle(ci, i));
 				for (int v=0; v<3; ++v) {
@@ -1271,6 +1317,7 @@ bool Scene::ReconstructMesh(float distInsert, //默认值2.5，minimum distance 
 	}//运算完最终的图割算法
 
 	// fix non-manifold vertices and edges
+	//一个face应该只会和一个face相邻，不可能和多个face相邻，这个函数就是为了解决这个问题
 	mesh.FixNonManifold();//非常重要的函数！！！！！！！！！！！！！！！！！！！！！！
 	return true;
 }
