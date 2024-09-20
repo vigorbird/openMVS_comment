@@ -336,6 +336,7 @@ SEACAVE::cList<SEACAVE::Thread> MeshRefine::threads;
 CriticalSection MeshRefine::cs;
 Semaphore MeshRefine::sem;
 
+//MeshRefine构造函数
 MeshRefine::MeshRefine(Scene& _scene, unsigned _nReduceMemory, unsigned _nAlternatePair, Real _weightRegularity, Real _ratioRigidityElasticity, unsigned _nResolutionLevel, unsigned _nMinResolution, unsigned nMaxViews, unsigned nMaxThreads)
 	:
 	weightRegularity(_weightRegularity),
@@ -370,6 +371,8 @@ MeshRefine::MeshRefine(Scene& _scene, unsigned _nReduceMemory, unsigned _nAltern
 	for (uint64_t pair: mapPairs)
 		pairs.AddConstruct(pair);
 }
+
+
 MeshRefine::~MeshRefine()
 {
 	// wait for the working threads to close
@@ -1033,6 +1036,7 @@ void MeshRefine::ThreadWorker()
 		sem.Signal();
 	}
 }
+
 void MeshRefine::WaitThreadWorkers(size_t nJobs)
 {
 	while (nJobs-- > 0)
@@ -1276,14 +1280,28 @@ protected:
 
 // optimize mesh using photo-consistency
 // fThPlanarVertex - threshold used to remove vertices on planar patches (percentage of the minimum depth, 0 - disable)
-bool Scene::RefineMesh(unsigned nResolutionLevel, unsigned nMinResolution, unsigned nMaxViews,
-					   float fDecimateMesh, unsigned nCloseHoles, unsigned nEnsureEdgeSize, unsigned nMaxFaceArea,
-					   unsigned nScales, float fScaleStep,
-					   unsigned nAlternatePair, float fRegularityWeight, float fRatioRigidityElasticity, float fGradientStep, float fThPlanarVertex, unsigned nReduceMemory)
+//作者提供了两种方式对mesh的优化，一种是直接调用ceres库，另外一种是作者自己写了一个梯度下降，两个没有什么区别
+//
+bool Scene::RefineMesh(unsigned nResolutionLevel,//图像分辨率 
+					   unsigned nMinResolution, 
+					   unsigned nMaxViews,//投影到多帧，帧的数量控制
+					   float fDecimateMesh, //mesh下采样率
+					   unsigned nCloseHoles, //洞的大小，如果小于这个数值就补上，大于这个数值就不补
+					   unsigned nEnsureEdgeSize, //
+					   unsigned nMaxFaceArea,//控制三角面投影到图像上的像素面积
+					   unsigned nScales, //默认值是2
+					   float fScaleStep,//尺度步长，默认值是0.5
+					   unsigned nAlternatePair, //一致性测量的匹配对数
+					   float fRegularityWeight, 
+					   float fRatioRigidityElasticity, 
+					   float fGradientStep, //gradient step to be used,如果设置是0的话那么会自动调节step的大小，默认值是45
+					   float fThPlanarVertex, 
+					   unsigned nReduceMemory)
 {
 	if (pointcloud.IsEmpty() && !ImagesHaveNeighbors())
 		SampleMeshWithVisibility();
 
+	//搜索 MeshRefine构造函数，里面启动了线程
 	MeshRefine refine(*this, nReduceMemory, nAlternatePair, fRegularityWeight, fRatioRigidityElasticity, nResolutionLevel, nMinResolution, nMaxViews, nMaxThreads);
 	if (!refine.IsValid())
 		return false;
@@ -1294,17 +1312,25 @@ bool Scene::RefineMesh(unsigned nResolutionLevel, unsigned nMinResolution, unsig
 		const Real scale(POWI(fScaleStep, nScales-nScale-1));
 		const Real step(POWI(2.f, nScales-nScale));
 		DEBUG_ULTIMATE("Refine mesh at: %.2f image scale", scale);
+		//1.数据准备部分！！！！！！！！！！！！！！！！！！！
+		//1.1对图像进行不同的resize，并对内参也做一次resize，不同尺度的图像用于进行光度误差评测
 		if (!refine.InitImages(scale, Real(0.12)*step+Real(0.2)))
 			return false;
 
 		// extract array of triangles incident to each vertex
+		//1.2.提取一些顶点信息，每个顶点有几个face和它相关
 		refine.ListVertexFacesPre();
 
 		// automatic mesh subdivision
+		//1.3.mesh细分
 		refine.SubdivideMesh(nMaxFaceArea, nScale == 0 ? fDecimateMesh : 1.f, nCloseHoles, nEnsureEdgeSize);
 
 		// extract array of triangle normals
+		//1.4.face的法向量计算
 		refine.ListVertexFacesPost();
+
+
+		//！！！！！！！！！前面都是mesh准备部分，后面开始进行真正核心算的计算！！！！！！！！！！！！
 
 		#if TD_VERBOSE != TD_VERBOSE_OFF
 		if (VERBOSITY_LEVEL > 2)

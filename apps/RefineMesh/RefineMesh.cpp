@@ -216,6 +216,7 @@ int main(int argc, LPCTSTR* argv)
 
 	Scene scene(OPT::nMaxThreads);
 	// load and refine the coarse mesh
+	//1.加载scene数据
 	const Scene::SCENE_TYPE sceneType(scene.Load(MAKE_PATH_SAFE(OPT::strInputFileName)));
 	if (sceneType == Scene::SCENE_NA)
 		return EXIT_FAILURE;
@@ -239,14 +240,17 @@ int main(int argc, LPCTSTR* argv)
 							  OPT::fRatioRigidityElasticity,
 							  OPT::fGradientStep))
 	#endif
-	if (!scene.RefineMesh(OPT::nResolutionLevel, OPT::nMinResolution, OPT::nMaxViews,
+	if (!scene.RefineMesh(OPT::nResolutionLevel,//默认值是0， 在refine之前需要下采样几次图像
+						  OPT::nMinResolution, 
+						  OPT::nMaxViews,
 						  OPT::fDecimateMesh, OPT::nCloseHoles, OPT::nEnsureEdgeSize,
 						  OPT::nMaxFaceArea,
-						  OPT::nScales, OPT::fScaleStep,
+						  OPT::nScales,//默认值是2 how many iterations to run mesh optimization on multi-scale images 
+						  OPT::fScaleStep,
 						  OPT::nAlternatePair,
 						  OPT::fRegularityWeight,
 						  OPT::fRatioRigidityElasticity,
-						  OPT::fGradientStep,
+						  OPT::fGradientStep,//gradient step to be used,如果设置是0的话那么会自动调节step的大小，默认值是45
 						  OPT::fPlanarVertexRatio,
 						  OPT::nReduceMemory))
 		return EXIT_FAILURE;
